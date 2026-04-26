@@ -8,7 +8,7 @@ from pathlib import Path
 @dataclass
 class LLMConfig:
     """Configuration for the LLM backend."""
-    base_url: str = os.getenv("LLM_BASE_URL", "http://localhost:8080/v1")
+    base_url: str = os.getenv("LLM_BASE_URL", "http://10.0.0.228:8080/v1")
     api_key: str = os.getenv("LLM_API_KEY", "not-needed")
     model: str = os.getenv("LLM_MODEL", "llm")
 
