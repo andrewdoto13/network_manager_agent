@@ -1,0 +1,33 @@
+[project]
+name = "network-management-agent"
+version = "0.1.0"
+description = "AI Agent that performs provider network management and optimization"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain-openai>=1.1.9",
+    "langchain>=1.2.10",
+    "langchain-core>=1.2.12",
+    "langgraph>=1.0.8",
+    "langgraph-checkpoint>=4.0.0",
+    "langgraph-prebuilt>=1.0.7",
+    "pandas>=3.0.0",
+    "scikit-learn>=1.8.0",
+    "numpy>=2.4.2",
+    "pydantic>=2.12.5",
+    "typing-extensions>=4.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ipython>=9.10.0",
+    "ipykernel>=7.2.0",
+    "matplotlib>=3.10.8",
+    "seaborn>=0.13.2",
+]
+
+[project.scripts]
+run-agent = "network_management_agent.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
