@@ -1,7 +1,7 @@
 """Tool definitions for the network management agent."""
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -116,7 +116,7 @@ def get_network_status(
     members: Annotated[list[dict], InjectedState("members")],
     network: Annotated[list[dict], InjectedState("network")],
     threshold: float = 20.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return the current network status including total providers and member coverage.
 
     - threshold: distance in miles to consider a member "covered" by a provider.

@@ -3,6 +3,8 @@
 import pandas as pd
 from pathlib import Path
 
+from .config import DATA_DIR
+
 
 def load_hospitals(path: Path | None = None) -> list[dict]:
     """Load hospital candidates from CSV.
@@ -14,7 +16,7 @@ def load_hospitals(path: Path | None = None) -> list[dict]:
         List of hospital dicts with an added 'id' column.
     """
     if path is None:
-        path = Path(__file__).parent.parent.parent / "data" / "raw" / "hospitals.csv"
+        path = DATA_DIR / "hospitals.csv"
 
     df = pd.read_csv(path).reset_index().rename(columns={"index": "id"})
     return df.to_dict(orient="records")
@@ -30,7 +32,7 @@ def load_members(path: Path | None = None) -> list[dict]:
         List of member dicts with an added 'id' column.
     """
     if path is None:
-        path = Path(__file__).parent.parent.parent / "data" / "raw" / "members.csv"
+        path = DATA_DIR / "members.csv"
 
     df = pd.read_csv(path).reset_index().rename(columns={"index": "id"})
     return df.to_dict(orient="records")

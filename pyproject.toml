@@ -1,5 +1,5 @@
 [project]
-name = "network-management-agent"
+name = "network-manager-agent"
 version = "0.1.0"
 description = "AI Agent that performs provider network management and optimization"
 requires-python = ">=3.12"
@@ -26,8 +26,11 @@ dev = [
 ]
 
 [project.scripts]
-run-agent = "network_management_agent.main:main"
+run-agent = "network_manager_agent.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"

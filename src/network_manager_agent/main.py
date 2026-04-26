@@ -104,7 +104,7 @@ def run_agent(agent, inputs: dict, config: dict):
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Network Management Agent - AI agent for provider network optimization"
+        description="Network Manager Agent - AI agent for provider network optimization"
     )
     parser.add_argument(
         "prompt",

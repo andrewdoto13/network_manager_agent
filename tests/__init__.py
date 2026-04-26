@@ -1,1 +1,1 @@
-"""Tests for network_management_agent."""
+"""Tests for network_manager_agent."""

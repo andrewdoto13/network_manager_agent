@@ -1,4 +1,4 @@
-"""Network Management Agent - AI agent for healthcare provider network management and optimization."""
+"""Network Manager Agent - AI agent for healthcare provider network management and optimization."""
 
 from .config import LLMConfig, create_llm
 from .data import load_data, load_hospitals, load_members

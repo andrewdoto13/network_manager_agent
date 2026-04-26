@@ -1,5 +1,6 @@
 """Configuration for the network management agent."""
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -7,9 +8,9 @@ from pathlib import Path
 @dataclass
 class LLMConfig:
     """Configuration for the LLM backend."""
-    base_url: str = "http://10.0.0.228:8080/v1"
-    api_key: str = "not-needed"
-    model: str = "llm"
+    base_url: str = os.getenv("LLM_BASE_URL", "http://localhost:8080/v1")
+    api_key: str = os.getenv("LLM_API_KEY", "not-needed")
+    model: str = os.getenv("LLM_MODEL", "llm")
 
 
 SUMMARIZE_THRESHOLD = 14

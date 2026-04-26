@@ -1,4 +1,4 @@
-# Network Management Agent
+# Network Manager Agent
 
 AI Agent that performs provider network management and optimization using LangGraph.
 
@@ -48,7 +48,7 @@ jupyter lab react_agent.ipynb
 ### CLI (after extracting to source)
 
 ```bash
-python -m network_management_agent.main
+python -m network_manager_agent.main
 ```
 
 ## Data Format
@@ -79,7 +79,7 @@ python -m network_management_agent.main
 ├── README.md               # This file
 ├── .gitignore
 ├── src/                    # Source code (importable package)
-│   └── network_management_agent/
+│           └── network_manager_agent/
 │       ├── __init__.py
 │       ├── agent.py        # State, tools, graph definition
 │       ├── config.py       # LLM and agent configuration
