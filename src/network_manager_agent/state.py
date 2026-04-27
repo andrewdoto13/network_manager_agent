@@ -22,3 +22,4 @@ class AgentState(MessagesState):
     network: Annotated[list[dict], operator.add] = []
     summary: str = ""
     original_message: str = ""
+    county_thresholds: dict[str, float] = {}

@@ -115,11 +115,13 @@ def add_provider(
 def get_network_status(
     members: Annotated[list[dict], InjectedState("members")],
     network: Annotated[list[dict], InjectedState("network")],
-    threshold: float = 20.0,
+    county_thresholds: Annotated[dict[str, float], InjectedState("county_thresholds")],
 ) -> dict[str, Any]:
     """Return the current network status including total providers and member coverage.
 
-    - threshold: distance in miles to consider a member "covered" by a provider.
+    - county_thresholds: A dictionary mapping county names to distance thresholds in miles.
+      If a county is not listed, a default threshold of 20.0 miles is used.
+
     Output format:
       {
         "total_providers": int,
@@ -133,7 +135,7 @@ def get_network_status(
     net_df = pd.DataFrame(network) if network else pd.DataFrame()
 
     summary = {"total_providers": len(network)}
-    if net_df.empty:
+    if net_df.empty or members_df.empty:
         summary["member_coverage"] = []
         return summary
 
@@ -146,27 +148,34 @@ def get_network_status(
         raise KeyError(f"`network` must contain: {', '.join(sorted(required_net_cols))}")
 
     tree = BallTree(_deg2rad(net_df), leaf_size=40, metric="haversine")
-    radius_rad = _miles_to_radians(threshold)
-
     member_pts = _deg2rad(members_df)
-    indices, _ = tree.query_radius(member_pts, r=radius_rad, return_distance=True)
 
-    members_df["has_access"] = np.array([len(lst) > 0 for lst in indices])
+    # We need to calculate coverage per county because thresholds can vary
+    coverage_results = []
+    
+    # Group members by county
+    for county, group in members_df.groupby("county"):
+        threshold = county_thresholds.get(county, 20.0)
+        radius_rad = _miles_to_radians(threshold)
+        
+        group_pts = _deg2rad(group)
+        # Query radius for this specific group's points
+        indices, _ = tree.query_radius(group_pts, r=radius_rad, return_distance=True)
+        
+        members_with_access = np.array([len(lst) > 0 for lst in indices]).sum()
+        total_members = len(group)
+        coverage_percentage = (members_with_access / total_members * 100).round(2)
+        
+        coverage_results.append({
+            "county": county,
+            "members_with_access": int(members_with_access),
+            "total_members": int(total_members),
+            "coverage_percentage": float(coverage_percentage)
+        })
 
-    agg = (
-        members_df
-        .groupby("county", as_index=False)
-        .agg(
-            members_with_access=("has_access", "sum"),
-            total_members=("has_access", "size"),
-        )
-    )
-
-    agg["coverage_percentage"] = (
-        agg["members_with_access"] / agg["total_members"] * 100
-    ).round(2)
-
-    summary["member_coverage"] = agg.to_dict(orient="records")
+    # Sort by county name for consistency
+    coverage_results.sort(key=lambda x: x["county"])
+    summary["member_coverage"] = coverage_results
     return summary
 
 

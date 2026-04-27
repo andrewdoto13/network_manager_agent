@@ -134,6 +134,12 @@ def main():
         default=None,
         help="Path to members CSV",
     )
+    parser.add_argument(
+        "--county-thresholds",
+        type=str,
+        default=None,
+        help="JSON string mapping county names to distance thresholds in miles (e.g. '{\"CountyA\": 10.0, \"CountyB\": 25.0}')",
+    )
 
     args = parser.parse_args()
 
@@ -152,8 +158,16 @@ def main():
         members_path=args.members,
     )
 
+    county_thresholds = {}
+    if args.county_thresholds:
+        try:
+            county_thresholds = json.loads(args.county_thresholds)
+        except json.JSONDecodeError:
+            print("Error: --county-thresholds must be a valid JSON string.")
+            sys.exit(1)
+
     # Build agent
-    agent = build_agent(llm, candidates, members)
+    agent = build_agent(llm, candidates, members, county_thresholds=county_thresholds)
 
     # Create thread config
     thread_config = {"configurable": {"thread_id": "1"}}
@@ -171,6 +185,7 @@ def main():
                     "messages": messages,
                     "candidates": candidates,
                     "members": members,
+                    "county_thresholds": county_thresholds,
                 }
                 run_agent(agent, inputs, thread_config)
 
@@ -188,6 +203,7 @@ def main():
             "messages": messages,
             "candidates": candidates,
             "members": members,
+            "county_thresholds": county_thresholds,
         }
         run_agent(agent, inputs, thread_config)
 
