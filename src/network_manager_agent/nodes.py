@@ -19,6 +19,7 @@ from .tools import (
     get_candidate_schema,
     add_provider,
     get_network_status,
+    simulate_network_change,
 )
 
 
@@ -50,6 +51,11 @@ RULES
 6. If required information is missing, ask the user for clarification instead of guessing.
 7. You MUST always write a response in your final message. Never return an empty response.
    Always summarize what was accomplished when the task is complete.
+8. When choosing between candidates, use simulate_network_change with compare_scenarios
+   to evaluate all options in a single call. Once you have simulation data, commit to
+   the best option - do not oscillate between simulating and deciding.
+9. Be decisive. After gathering sufficient data, take action. Avoid repeating the same
+   reasoning or simulation multiple times.
 
 CANDIDATE SPECIALTIES
 ---------------
@@ -82,7 +88,7 @@ CANDIDATE SPECIALTIES
                 HumanMessage(content=anchor),
             ] + messages_history
 
-    tools_list = [get_candidates, get_candidate_schema, add_provider, get_network_status]
+    tools_list = [get_candidates, get_candidate_schema, add_provider, get_network_status, simulate_network_change]
     response = llm.bind_tools(tools_list).invoke(messages)
 
     return {
@@ -112,7 +118,11 @@ def update_state(state: AgentState):
             try:
                 parsed_output = json.loads(raw_output) if isinstance(raw_output, str) else raw_output
                 if isinstance(parsed_output, dict):
-                    new_providers.append(parsed_output)
+                    added = parsed_output.get("added", [])
+                    if isinstance(added, list):
+                        new_providers.extend(added)
+                    else:
+                        new_providers.append(parsed_output)
             except (json.JSONDecodeError, ValueError):
                 continue
 

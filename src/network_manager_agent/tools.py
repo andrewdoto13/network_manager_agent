@@ -23,6 +23,55 @@ def _miles_to_radians(threshold_miles: float, earth_radius_miles: float = 3958.8
     return threshold_miles / earth_radius_miles
 
 
+def _compute_coverage(
+    network: list[dict],
+    members: list[dict],
+    county_thresholds: dict[str, float],
+) -> list[dict]:
+    """Compute per-county member coverage given a network and member set.
+
+    Returns a list of dicts sorted by county name, each with keys:
+        county, members_with_access, total_members, coverage_percentage
+    """
+    members_df = pd.DataFrame(members) if members else pd.DataFrame()
+    net_df = pd.DataFrame(network) if network else pd.DataFrame()
+
+    if net_df.empty or members_df.empty:
+        return []
+
+    required_cols = {"county", "lat", "lon"}
+    if not required_cols.issubset(members_df.columns):
+        raise KeyError(f"`members` must contain: {', '.join(sorted(required_cols))}")
+
+    required_net_cols = {"lat", "lon"}
+    if not required_net_cols.issubset(net_df.columns):
+        raise KeyError(f"`network` must contain: {', '.join(sorted(required_net_cols))}")
+
+    tree = BallTree(_deg2rad(net_df), leaf_size=40, metric="haversine")
+
+    coverage_results = []
+    for county, group in members_df.groupby("county"):
+        threshold = county_thresholds.get(county, 20.0)
+        radius_rad = _miles_to_radians(threshold)
+
+        group_pts = _deg2rad(group)
+        indices, _ = tree.query_radius(group_pts, r=radius_rad, return_distance=True)
+
+        members_with_access = int(np.array([len(lst) > 0 for lst in indices]).sum())
+        total_members = len(group)
+        coverage_percentage = round(members_with_access / total_members * 100, 2)
+
+        coverage_results.append({
+            "county": county,
+            "members_with_access": members_with_access,
+            "total_members": total_members,
+            "coverage_percentage": coverage_percentage,
+        })
+
+    coverage_results.sort(key=lambda x: x["county"])
+    return coverage_results
+
+
 @tool
 def get_candidates(
     specialty: str,
@@ -85,14 +134,15 @@ def get_candidate_schema(
 
 @tool
 def add_provider(
-    id: int,
+    ids: list[int],
     network: Annotated[list[dict], InjectedState("network")],
     candidates: Annotated[list[dict], InjectedState("candidates")],
 ):
-    """Add a provider to the network using the given provider ID.
+    """Add one or more providers to the network using their IDs.
 
-    If the provider is already in the network, returns a message containing 'Skip'
-    -- do not attempt to add them again.
+    - ids: List of provider IDs to add. Pass a single ID as [id] or multiple as [id1, id2, ...].
+    Returns a list of successfully added provider dicts. Providers already in the network
+    are silently skipped. Invalid IDs are reported in the 'errors' field.
     """
     network_df = pd.DataFrame(network) if network else pd.DataFrame()
     candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
@@ -100,15 +150,23 @@ def add_provider(
     if candidates_df.empty:
         return "No candidate data available."
 
-    if not network_df.empty and id in network_df["id"].values:
-        return f"Skip: Provider {id} is already in the network."
+    used_ids = set(network_df["id"].values) if not network_df.empty else set()
+    added: list[dict] = []
+    errors: list[str] = []
 
-    match = candidates_df[candidates_df.id == id]
-    if match.empty:
-        return f"Provider {id} not found in candidates."
+    for pid in ids:
+        if pid in used_ids:
+            continue
+        match = candidates_df[candidates_df.id == pid]
+        if match.empty:
+            errors.append(f"Provider {pid} not found in candidates.")
+        else:
+            added.append(match.iloc[0].to_dict())
 
-    new_row = match.iloc[0].to_dict()
-    return new_row
+    result: dict[str, Any] = {"added": added}
+    if errors:
+        result["errors"] = errors
+    return result
 
 
 @tool
@@ -131,52 +189,184 @@ def get_network_status(
         ]
       }
     """
-    members_df = pd.DataFrame(members) if members else pd.DataFrame()
-    net_df = pd.DataFrame(network) if network else pd.DataFrame()
+    coverage = _compute_coverage(network, members, county_thresholds)
+    return {
+        "total_providers": len(network),
+        "member_coverage": coverage,
+    }
 
-    summary = {"total_providers": len(network)}
-    if net_df.empty or members_df.empty:
-        summary["member_coverage"] = []
-        return summary
 
-    required_cols = {"county", "lat", "lon"}
-    if not required_cols.issubset(members_df.columns):
-        raise KeyError(f"`members` must contain: {', '.join(sorted(required_cols))}")
+def _build_sim_network(
+    network_df: pd.DataFrame,
+    candidates_df: pd.DataFrame,
+    add_ids: list[int],
+    remove_ids: list[int],
+) -> list[dict]:
+    """Build a temporary network by applying additions and removals."""
+    sim_network = [p for _, p in network_df.iterrows()] if not network_df.empty else []
+    sim_network = [p.to_dict() if hasattr(p, "to_dict") else p for p in sim_network]
 
-    required_net_cols = {"lat", "lon"}
-    if not required_net_cols.issubset(net_df.columns):
-        raise KeyError(f"`network` must contain: {', '.join(sorted(required_net_cols))}")
+    for pid in remove_ids:
+        sim_network = [p for p in sim_network if p["id"] != pid]
 
-    tree = BallTree(_deg2rad(net_df), leaf_size=40, metric="haversine")
-    member_pts = _deg2rad(members_df)
+    for pid in add_ids:
+        match = candidates_df[candidates_df.id == pid]
+        if not match.empty:
+            sim_network.append(match.iloc[0].to_dict())
 
-    # We need to calculate coverage per county because thresholds can vary
-    coverage_results = []
-    
-    # Group members by county
-    for county, group in members_df.groupby("county"):
-        threshold = county_thresholds.get(county, 20.0)
-        radius_rad = _miles_to_radians(threshold)
-        
-        group_pts = _deg2rad(group)
-        # Query radius for this specific group's points
-        indices, _ = tree.query_radius(group_pts, r=radius_rad, return_distance=True)
-        
-        members_with_access = np.array([len(lst) > 0 for lst in indices]).sum()
-        total_members = len(group)
-        coverage_percentage = (members_with_access / total_members * 100).round(2)
-        
-        coverage_results.append({
+    return sim_network
+
+
+def _compute_delta(
+    current_coverage: list[dict],
+    simulated_coverage: list[dict],
+) -> list[dict]:
+    """Compute per-county coverage change between current and simulated."""
+    current_map = {c["county"]: c["coverage_percentage"] for c in current_coverage}
+    sim_map = {c["county"]: c["coverage_percentage"] for c in simulated_coverage}
+    all_counties = sorted(set(list(current_map.keys()) + list(sim_map.keys())))
+    delta = []
+    for county in all_counties:
+        change = round(sim_map.get(county, 0) - current_map.get(county, 0), 2)
+        delta.append({
             "county": county,
-            "members_with_access": int(members_with_access),
-            "total_members": int(total_members),
-            "coverage_percentage": float(coverage_percentage)
+            "coverage_change": change,
         })
-
-    # Sort by county name for consistency
-    coverage_results.sort(key=lambda x: x["county"])
-    summary["member_coverage"] = coverage_results
-    return summary
+    return delta
 
 
-TOOLS = [get_candidates, get_candidate_schema, add_provider, get_network_status]
+def _validate_scenario(
+    add_ids: list[int],
+    remove_ids: list[int],
+    candidates_df: pd.DataFrame,
+    network_df: pd.DataFrame,
+) -> list[str]:
+    """Validate a single scenario's provider IDs. Returns list of error strings."""
+    errors: list[str] = []
+    if len(add_ids) > 5:
+        errors.append("add_ids: maximum 5 providers allowed per scenario.")
+    if len(remove_ids) > 5:
+        errors.append("remove_ids: maximum 5 providers allowed per scenario.")
+
+    used_ids = set(network_df["id"].values) if not network_df.empty else set()
+
+    for pid in add_ids:
+        if pid in used_ids:
+            errors.append(f"Provider {pid} is already in the network.")
+        elif candidates_df.empty or pid not in candidates_df["id"].values:
+            errors.append(f"Provider {pid} not found in candidates.")
+
+    for pid in remove_ids:
+        if network_df.empty or pid not in network_df["id"].values:
+            errors.append(f"Provider {pid} is not in the current network.")
+
+    return errors
+
+
+@tool
+def simulate_network_change(
+    add_ids: list[int],
+    remove_ids: list[int],
+    candidates: Annotated[list[dict], InjectedState("candidates")],
+    network: Annotated[list[dict], InjectedState("network")],
+    members: Annotated[list[dict], InjectedState("members")],
+    county_thresholds: Annotated[dict[str, float], InjectedState("county_thresholds")],
+    compare_scenarios: list[dict] = [],
+) -> dict[str, Any]:
+    """Simulate adding or removing providers and show the coverage impact without modifying the network.
+
+    Use this to test whether adding or removing providers would improve coverage before committing.
+
+    MODE 1 - Single simulation:
+        Pass add_ids and/or remove_ids to simulate one change.
+        - add_ids: Provider IDs to add (max 5). Must exist in candidates and not be in the current network.
+        - remove_ids: Provider IDs to remove (max 5). Must be in the current network.
+
+    MODE 2 - Compare multiple scenarios:
+        Pass compare_scenarios to test multiple mutually exclusive options in one call.
+        Each scenario is evaluated independently and ranked by coverage improvement.
+        - compare_scenarios: List of {"add_ids": [...], "remove_ids": [...]} dicts (max 5 scenarios).
+        - When compare_scenarios is provided, add_ids and remove_ids are ignored.
+
+    Returns current coverage, simulated coverage, and per-county delta (percentage point change).
+    """
+    candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
+    network_df = pd.DataFrame(network) if network else pd.DataFrame()
+
+    current_coverage = _compute_coverage(network, members, county_thresholds)
+
+    if compare_scenarios:
+        if len(compare_scenarios) > 5:
+            return {"error": "compare_scenarios: maximum 5 scenarios allowed."}
+
+        all_errors: list[str] = []
+        scenario_results: list[dict[str, Any]] = []
+
+        for sc in compare_scenarios:
+            sc_add = sc.get("add_ids", [])
+            sc_remove = sc.get("remove_ids", [])
+            errs = _validate_scenario(sc_add, sc_remove, candidates_df, network_df)
+            if errs:
+                all_errors.append({
+                    "scenario": {"add_ids": sc_add, "remove_ids": sc_remove},
+                    "errors": errs,
+                })
+                continue
+
+            sim_net = _build_sim_network(network_df, candidates_df, sc_add, sc_remove)
+            sim_cov = _compute_coverage(sim_net, members, county_thresholds)
+            sc_delta = _compute_delta(current_coverage, sim_cov)
+
+            scenario_results.append({
+                "add_ids": sc_add,
+                "remove_ids": sc_remove,
+                "total_providers": len(sim_net),
+                "coverage": sim_cov,
+                "delta": sc_delta,
+            })
+
+        scenario_results.sort(
+            key=lambda s: sum(d["coverage_change"] for d in s["delta"]),
+            reverse=True,
+        )
+        for rank, sc in enumerate(scenario_results, 1):
+            sc["rank"] = rank
+
+        result: dict[str, Any] = {
+            "current": {
+                "total_providers": len(network),
+                "coverage": current_coverage,
+            },
+            "scenarios": scenario_results,
+        }
+        if all_errors:
+            result["errors"] = all_errors
+        return result
+
+    if len(add_ids) > 5:
+        return {"error": "add_ids: maximum 5 providers allowed per simulation."}
+    if len(remove_ids) > 5:
+        return {"error": "remove_ids: maximum 5 providers allowed per simulation."}
+
+    errors = _validate_scenario(add_ids, remove_ids, candidates_df, network_df)
+    if errors:
+        return {"error": "Invalid providers", "details": errors}
+
+    sim_net = _build_sim_network(network_df, candidates_df, add_ids, remove_ids)
+    sim_cov = _compute_coverage(sim_net, members, county_thresholds)
+    delta = _compute_delta(current_coverage, sim_cov)
+
+    return {
+        "current": {
+            "total_providers": len(network),
+            "coverage": current_coverage,
+        },
+        "simulated": {
+            "total_providers": len(sim_net),
+            "coverage": sim_cov,
+        },
+        "delta": delta,
+    }
+
+
+TOOLS = [get_candidates, get_candidate_schema, add_provider, get_network_status, simulate_network_change]
