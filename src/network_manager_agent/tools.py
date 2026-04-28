@@ -13,9 +13,23 @@ from typing import Annotated
 from .state import AgentState
 
 
+def _find_column(df: pd.DataFrame, target: str, synonyms: list[str] = None) -> str:
+    """Find a column in a DataFrame case-insensitively, optionally using synonyms."""
+    search_terms = [target.lower()]
+    if synonyms:
+        search_terms.extend([s.lower() for s in synonyms])
+    
+    for col in df.columns:
+        if col.lower() in search_terms:
+            return col
+    raise KeyError(f"Could not find column matching {target} or synonyms {synonyms} in DataFrame")
+
+
 def _deg2rad(df: pd.DataFrame) -> np.ndarray:
     """Convert lat/lon from degrees to radians."""
-    return df[["lat", "lon"]].values * (np.pi / 180.0)
+    lat_col = _find_column(df, "lat", ["latitude"])
+    lon_col = _find_column(df, "lon", ["longitude"])
+    return df[[lat_col, lon_col]].values * (np.pi / 180.0)
 
 
 def _miles_to_radians(threshold_miles: float, earth_radius_miles: float = 3958.8) -> float:
@@ -29,7 +43,7 @@ def _compute_coverage(
     county_thresholds: dict[str, float],
 ) -> list[dict]:
     """Compute per-county member coverage given a network and member set.
-
+    
     Returns a list of dicts sorted by county name, each with keys:
         county, members_with_access, total_members, coverage_percentage
     """
@@ -39,19 +53,21 @@ def _compute_coverage(
     if net_df.empty or members_df.empty:
         return []
 
-    required_cols = {"county", "lat", "lon"}
-    if not required_cols.issubset(members_df.columns):
-        raise KeyError(f"`members` must contain: {', '.join(sorted(required_cols))}")
-
-    required_net_cols = {"lat", "lon"}
-    if not required_net_cols.issubset(net_df.columns):
-        raise KeyError(f"`network` must contain: {', '.join(sorted(required_net_cols))}")
+    try:
+        m_county = _find_column(members_df, "county")
+        m_lat = _find_column(members_df, "lat", ["latitude"])
+        m_lon = _find_column(members_df, "lon", ["longitude"])
+        
+        n_lat = _find_column(net_df, "lat", ["latitude"])
+        n_lon = _find_column(net_df, "lon", ["longitude"])
+    except KeyError as e:
+        raise KeyError(f"Required columns not found: {e}")
 
     tree = BallTree(_deg2rad(net_df), leaf_size=40, metric="haversine")
 
     coverage_results = []
-    for county, group in members_df.groupby("county"):
-        threshold = county_thresholds.get(county, 20.0)
+    for county_val, group in members_df.groupby(m_county):
+        threshold = county_thresholds.get(county_val, 20.0)
         radius_rad = _miles_to_radians(threshold)
 
         group_pts = _deg2rad(group)
@@ -62,7 +78,7 @@ def _compute_coverage(
         coverage_percentage = round(members_with_access / total_members * 100, 2)
 
         coverage_results.append({
-            "county": county,
+            "county": county_val,
             "members_with_access": members_with_access,
             "total_members": total_members,
             "coverage_percentage": coverage_percentage,
@@ -70,6 +86,7 @@ def _compute_coverage(
 
     coverage_results.sort(key=lambda x: x["county"])
     return coverage_results
+
 
 
 def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
@@ -156,7 +173,7 @@ def get_candidates(
     if eligible_providers.empty:
         return "No available candidates for this specialty."
         
-    eligible_entities = set(eligible_providers[entity_col].unique())
+    eligible_entities = set(eligible_providers[entity_col].dropna().unique())
     
     # 2. Exclude entities that are already (partially) in the network
     if not network_df.empty and entity_col in network_df.columns:
@@ -241,17 +258,20 @@ def get_candidate_schema(
             if pd.api.types.is_list_like(entity_df[col].iloc[0]) if not entity_df[col].empty else False:
                 # For list-like columns (e.g., specialties), we count total elements or unique elements across all lists
                 all_vals = [item for sublist in entity_df[col].dropna() for item in sublist]
-                unique_vals = set(all_vals)
+                unique_vals = sorted(list(set(all_vals)))
                 col_profile.update({
                     "unique_count": int(len(unique_vals)),
+                    "unique_values": unique_vals,
                     "distribution": {str(k): int(v) for k, v in pd.Series(all_vals).value_counts().head(5).to_dict().items()},
                 })
-            else:
-                unique_values = entity_df[col].dropna().unique()
+            else:  # Categorical / Object
+                unique_values = sorted(entity_df[col].dropna().unique().tolist())
                 col_profile.update({
                     "unique_count": int(len(unique_values)),
+                    "unique_values": unique_values,
                     "distribution": {str(k): int(v) for k, v in entity_df[col].value_counts().head(5).to_dict().items()},
                 })
+
 
         profile[col] = col_profile
 

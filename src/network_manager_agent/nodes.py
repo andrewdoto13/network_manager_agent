@@ -33,7 +33,6 @@ def _get_anchor_message(state: AgentState) -> str:
 
 def network_manager(state: AgentState, llm: ChatOpenAI):
     """The main LLM reasoning node that decides which tools to call."""
-    specialties = list(set(c["specialty"] for c in state.get("candidates", [])))
 
     system_message_content = f'''
 You are an assistant responsible for managing a healthcare provider network.
@@ -42,25 +41,23 @@ Follow all rules below exactly.
 
 RULES
 ---------------
-1. You may ONLY call add_contract_entity with valid entity IDs that appear in get_candidates result.
-2. Never invent entities, providers, specialties, counts, or network state. Use ONLY the data returned by tools.
-3. If get_candidates returns an empty list, that means no entities remain for that specialty.
+1. You MUST call get_candidate_schema as your first action in any new task to discover the available specialties and the exact column names of the current dataset.
+2. You may ONLY call add_contract_entity with valid entity IDs that appear in get_candidates result.
+3. Never invent entities, providers, specialties, counts, or network state. Use ONLY the data returned by tools.
+4. If get_candidates returns an empty list, that means no entities remain for that specialty.
    Do NOT retry unless the user explicitly requests it.
-4. The get_network_status function is THE source of truth for the network.
-5. Factor in the user's stated preferences when deciding whether to call tools.
-6. If required information is missing, ask the user for clarification instead of guessing.
-7. You MUST always write a response in your final message. Never return an empty response.
+5. The get_network_status function is THE source of truth for the network.
+6. Factor in the user's stated preferences when deciding whether to call tools.
+7. If required information is missing, ask the user for clarification instead of guessing.
+8. You MUST always write a response in your final message. Never return an empty response.
    Always summarize what was accomplished when the task is complete.
-8. When choosing between entities, use simulate_network_change with compare_scenarios
+9. When choosing between entities, use simulate_network_change with compare_scenarios
    to evaluate all options in a single call. Once you have simulation data, commit to
    the best option - do not oscillate between simulating and deciding.
-9. Be decisive. After gathering sufficient data, take action. Avoid repeating the same
-   reasoning or simulation multiple times.
-
-CANDIDATE SPECIALTIES
----------------
-{specialties}
+10. Be decisive. After gathering sufficient data, take action. Avoid repeating the same
+    reasoning or simulation multiple times.
 '''
+
     messages_history = state.get("messages", [])
     original_message = state.get("original_message") or ""
 

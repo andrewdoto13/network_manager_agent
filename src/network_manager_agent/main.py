@@ -154,7 +154,7 @@ def main():
 
     # Load data
     candidates, members = load_data(
-        hospitals_path=args.hospitals,
+        candidates_path=args.hospitals,
         members_path=args.members,
     )
 

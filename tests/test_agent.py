@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from network_manager_agent.data import load_hospitals, load_members, load_data
+from network_manager_agent.data import load_candidates, load_members, load_data
 from network_manager_agent.state import AgentState
 from network_manager_agent.tools import (
     get_candidates,
@@ -17,19 +17,20 @@ from network_manager_agent.tools import (
 class TestDataLoading:
     """Tests for data loading functions."""
 
-    def test_load_hospitals_returns_list(self):
-        candidates = load_hospitals()
+    def test_load_candidates_returns_list(self):
+        candidates = load_candidates()
         assert isinstance(candidates, list)
         assert len(candidates) > 0
 
-    def test_load_hospitals_has_required_columns(self):
-        candidates = load_hospitals()
+    def test_load_candidates_has_required_columns(self):
+        candidates = load_candidates()
         first = candidates[0]
         assert "id" in first
-        assert "lat" in first
-        assert "lon" in first
-        assert "specialty" in first
-        assert "effectiveness" in first
+        # Check for either lat or Latitude
+        assert any(col in first for col in ["lat", "Latitude"])
+        assert any(col in first for col in ["lon", "Longitude"])
+        assert any(col in first for col in ["specialty", "Specialty"])
+        assert any(col in first for col in ["effectiveness", "Effectiveness"])
 
     def test_load_members_returns_list(self):
         members = load_members()
@@ -50,15 +51,16 @@ class TestDataLoading:
         assert isinstance(members, list)
 
     def test_load_data_with_custom_paths(self, tmp_path):
-        hospitals_csv = tmp_path / "hospitals.csv"
-        hospitals_csv.write_text("lat,lon,cluster,county,specialty,effectiveness\n42.0,-83.0,test,test,hospital,5\n")
+        candidates_csv = tmp_path / "candidates.csv"
+        candidates_csv.write_text("lat,lon,cluster,county,specialty,effectiveness\n42.0,-83.0,test,test,hospital,5\n")
         members_csv = tmp_path / "members.csv"
         members_csv.write_text("lat,lon,county\n42.1,-83.1,test\n")
-
+    
         candidates, members = load_data(
-            hospitals_path=hospitals_csv,
+            candidates_path=candidates_csv,
             members_path=members_csv,
         )
+
         assert len(candidates) == 1
         assert len(members) == 1
 

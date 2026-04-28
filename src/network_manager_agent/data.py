@@ -6,20 +6,36 @@ from pathlib import Path
 from .config import DATA_DIR
 
 
-def load_hospitals(path: Path | None = None) -> list[dict]:
-    """Load hospital candidates from CSV.
-
+def load_candidates(path: Path | None = None) -> list[dict]:
+    """Load candidate entities from CSV and normalize coordinates.
+    
     Args:
-        path: Path to hospitals.csv. Defaults to data/raw/hospitals.csv.
-
+        path: Path to candidates CSV. Defaults to data/raw/mi_market_data.csv.
+    
     Returns:
-        List of hospital dicts with an added 'id' column.
+        List of candidate dicts with an added 'id' column and normalized lat/lon.
     """
     if path is None:
-        path = DATA_DIR / "hospitals.csv"
+        path = DATA_DIR / "mi_market_data.csv"
 
     df = pd.read_csv(path).reset_index().rename(columns={"index": "id"})
+    
+    # Normalize coordinates if they are scaled integers (e.g., 43451784 instead of 43.451784)
+    # Heuristic: if latitude mean is significantly outside [-90, 90], it's likely scaled.
+    lat_col = next((c for c in df.columns if c.lower() in ["lat", "latitude"]), None)
+    lon_col = next((c for c in df.columns if c.lower() in ["lon", "longitude"]), None)
+    
+    if lat_col and lon_col:
+        # Check if values are scaled (e.g., > 1000)
+        if df[lat_col].abs().mean() > 1000:
+            df[lat_col] = df[lat_col] / 1_000_000.0
+            df[lon_col] = df[lon_col] / 1_000_000.0
+            
+            # Ensure longitudes are negative (West)
+            df.loc[df[lon_col] > 0, lon_col] *= -1
+            
     return df.to_dict(orient="records")
+
 
 
 def load_members(path: Path | None = None) -> list[dict]:
@@ -39,18 +55,19 @@ def load_members(path: Path | None = None) -> list[dict]:
 
 
 def load_data(
-    hospitals_path: Path | None = None,
+    candidates_path: Path | None = None,
     members_path: Path | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Load both hospitals and members data.
-
+    """Load both candidates and members data.
+    
     Args:
-        hospitals_path: Path to hospitals CSV.
+        candidates_path: Path to candidates CSV.
         members_path: Path to members CSV.
-
+    
     Returns:
         Tuple of (candidates, members) as lists of dicts.
     """
-    candidates = load_hospitals(hospitals_path)
+    candidates = load_candidates(candidates_path)
     members = load_members(members_path)
     return candidates, members
+
