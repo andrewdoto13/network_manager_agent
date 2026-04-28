@@ -76,6 +76,7 @@ class TestAgentState:
         state["network"] = []
         state["summary"] = ""
         state["original_message"] = ""
+        state["county_specialty_thresholds"] = {}
         assert isinstance(state, dict)
         assert "messages" in state
         assert "candidates" in state
@@ -237,7 +238,8 @@ class TestTools:
         result = get_network_status.invoke({
             "members": members,
             "network": [],
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
+            "candidates": [],
         })
         assert result["total_providers"] == 0
         assert result["member_coverage"] == []
@@ -253,11 +255,19 @@ class TestTools:
         result = get_network_status.invoke({
             "members": members,
             "network": network,
-            "county_thresholds": {},
+            "county_specialty_thresholds": {"wayne": {"hospital": 20.0}},
+            "candidates": network,
         })
         assert result["total_providers"] == 1
         assert "member_coverage" in result
         assert isinstance(result["member_coverage"], list)
+        assert len(result["member_coverage"]) > 0
+        for cov in result["member_coverage"]:
+            assert "county" in cov
+            assert "specialty" in cov
+            assert "members_with_access" in cov
+            assert "total_members" in cov
+            assert "coverage_percentage" in cov
 
 
 class TestSimulateNetworkChange:
@@ -281,7 +291,7 @@ class TestSimulateNetworkChange:
             "candidates": candidates,
             "network": network,
             "members": members,
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert "current" in result
         assert "simulated" in result
@@ -304,7 +314,7 @@ class TestSimulateNetworkChange:
             "candidates": candidates,
             "network": network,
             "members": members,
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert result["current"]["total_providers"] == 2
         assert result["simulated"]["total_providers"] == 1
@@ -326,7 +336,7 @@ class TestSimulateNetworkChange:
             "candidates": candidates,
             "network": network,
             "members": members,
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert result["current"]["total_providers"] == 1
         assert result["simulated"]["total_providers"] == 1
@@ -344,7 +354,7 @@ class TestSimulateNetworkChange:
             "candidates": candidates,
             "network": network,
             "members": [],
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert "error" in result
         assert any("already in the network" in d for d in result["details"])
@@ -356,7 +366,7 @@ class TestSimulateNetworkChange:
             "candidates": [],
             "network": [],
             "members": [],
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert "error" in result
         assert any("not in the current network" in d for d in result["details"])
@@ -368,7 +378,7 @@ class TestSimulateNetworkChange:
             "candidates": [],
             "network": [],
             "members": [],
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert "error" in result
         assert "maximum 5" in result["error"]
@@ -380,7 +390,7 @@ class TestSimulateNetworkChange:
             "candidates": [],
             "network": [{"id": i, "lat": 42.0, "lon": -83.0, "Primary Contract Entity": f"E{i}"} for i in range(1, 7)],
             "members": [],
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert "error" in result
         assert "maximum 5" in result["error"]
@@ -403,11 +413,13 @@ class TestSimulateNetworkChange:
             "candidates": candidates,
             "network": network,
             "members": members,
-            "county_thresholds": {},
+            "county_specialty_thresholds": {"wayne": {"hospital": 20.0}, "oakland": {"hospital": 20.0}},
         })
         delta_counties = {d["county"] for d in result["delta"]}
+        delta_specialties = {d["specialty"] for d in result["delta"]}
         assert "wayne" in delta_counties
         assert "oakland" in delta_counties
+        assert "hospital" in delta_specialties
         for d in result["delta"]:
             assert "coverage_change" in d
 
@@ -433,7 +445,7 @@ class TestSimulateNetworkChange:
             "candidates": candidates,
             "network": network,
             "members": members,
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert "current" in result
         assert "scenarios" in result
@@ -463,7 +475,7 @@ class TestSimulateNetworkChange:
             "candidates": candidates,
             "network": network,
             "members": members,
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert len(result["scenarios"]) == 2
         assert result["scenarios"][0]["rank"] == 1
@@ -478,7 +490,7 @@ class TestSimulateNetworkChange:
             "candidates": [],
             "network": [],
             "members": [],
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert "errors" in result
         assert len(result["errors"]) == 1
@@ -498,7 +510,7 @@ class TestSimulateNetworkChange:
             "candidates": [],
             "network": [],
             "members": [],
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert "error" in result
         assert "maximum 5" in result["error"]
@@ -518,8 +530,109 @@ class TestSimulateNetworkChange:
             "candidates": candidates,
             "network": network,
             "members": members,
-            "county_thresholds": {},
+            "county_specialty_thresholds": {},
         })
         assert "simulated" in result
         assert "scenarios" not in result
         assert result["simulated"]["total_providers"] == 1
+
+    def test_get_network_status_per_county_specialty(self):
+        members = [
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "wayne"},
+            {"id": 3, "lat": 42.5, "lon": -83.6, "county": "oakland"},
+        ]
+        network = [
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital"},
+            {"id": 2, "lat": 42.31, "lon": -83.48, "specialty": "cardiologist"},
+        ]
+        candidates = network.copy()
+        result = get_network_status.invoke({
+            "members": members,
+            "network": network,
+            "county_specialty_thresholds": {"wayne": {"hospital": 20.0, "cardiologist": 20.0}, "oakland": {"hospital": 20.0}},
+            "candidates": candidates,
+        })
+        assert result["total_providers"] == 2
+        coverage = result["member_coverage"]
+        assert len(coverage) == 3
+        coverage_map = {(c["county"], c["specialty"]): c for c in coverage}
+        assert ("wayne", "hospital") in coverage_map
+        assert ("wayne", "cardiologist") in coverage_map
+        assert ("oakland", "hospital") in coverage_map
+
+    def test_get_network_status_validation_errors(self):
+        members = [
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+        ]
+        network = [
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital"},
+        ]
+        candidates = network.copy()
+        result = get_network_status.invoke({
+            "members": members,
+            "network": network,
+            "county_specialty_thresholds": {"wayne": {"hospital": 20.0, "neurologist": 10.0}},
+            "candidates": candidates,
+        })
+        assert "validation_errors" in result
+        assert len(result["validation_errors"]) > 0
+        assert any("neurologist" in e for e in result["validation_errors"])
+
+    def test_simulate_network_change_validation_errors(self):
+        members = [
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+        ]
+        network = [
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
+        ]
+        candidates = [
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "Primary Contract Entity": "Entity B"},
+        ]
+        result = simulate_network_change.invoke({
+            "add_entity_ids": ["Entity B"],
+            "remove_entity_ids": [],
+            "candidates": candidates,
+            "network": network,
+            "members": members,
+            "county_specialty_thresholds": {"wayne": {"hospital": 20.0, "psychiatrist": 15.0}},
+        })
+        assert "validation_errors" in result
+        assert any("psychiatrist" in e for e in result["validation_errors"])
+
+    def test_compute_coverage_no_specialty_in_candidates(self):
+        members = [
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+        ]
+        network = [
+            {"id": 1, "lat": 42.32, "lon": -83.49},
+        ]
+        candidates = []
+        result = get_network_status.invoke({
+            "members": members,
+            "network": network,
+            "county_specialty_thresholds": {"wayne": {"hospital": 20.0}},
+            "candidates": candidates,
+        })
+        assert result["total_providers"] == 1
+        assert len(result["member_coverage"]) == 1
+        assert result["member_coverage"][0]["coverage_percentage"] == 0.0
+
+    def test_compute_coverage_zero_coverage_when_no_network_providers(self):
+        members = [
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+        ]
+        network = [
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital"},
+        ]
+        candidates = network.copy()
+        result = get_network_status.invoke({
+            "members": members,
+            "network": network,
+            "county_specialty_thresholds": {"wayne": {"cardiologist": 20.0}},
+            "candidates": candidates,
+        })
+        assert len(result["member_coverage"]) == 1
+        assert result["member_coverage"][0]["specialty"] == "cardiologist"
+        assert result["member_coverage"][0]["coverage_percentage"] == 0.0

@@ -15,14 +15,14 @@ from .nodes import (
 )
 
 
-def build_agent(llm: ChatOpenAI, candidates: list[dict], members: list[dict], county_thresholds: dict[str, float] = None):
+def build_agent(llm: ChatOpenAI, candidates: list[dict], members: list[dict], county_specialty_thresholds: dict[str, dict[str, float]] = None):
     """Build and compile the network management agent graph.
 
     Args:
         llm: Configured ChatOpenAI instance.
         candidates: List of available provider candidates.
         members: List of member locations.
-        county_thresholds: Optional dictionary mapping counties to distance thresholds.
+        county_specialty_thresholds: Optional nested dictionary mapping counties to specialty->threshold dicts.
 
     Returns:
         Compiled LangGraph agent ready for execution.

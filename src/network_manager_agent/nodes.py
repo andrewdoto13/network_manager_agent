@@ -34,9 +34,22 @@ def _get_anchor_message(state: AgentState) -> str:
 def network_manager(state: AgentState, llm: ChatOpenAI):
     """The main LLM reasoning node that decides which tools to call."""
 
+    county_specialty_thresholds = state.get("county_specialty_thresholds", {})
+
+    scope_lines = []
+    for county, specialties in county_specialty_thresholds.items():
+        spec_str = ", ".join(f"{spec} ({threshold}mi)" for spec, threshold in specialties.items())
+        scope_lines.append(f"- {county}: {spec_str}")
+    scope_section = "\n".join(scope_lines) if scope_lines else ""
+
     system_message_content = f'''
 You are an assistant responsible for managing a healthcare provider network.
 You MUST use the available tools to update the network state.
+
+NETWORK SCOPE
+You are evaluating member coverage for these county-specialty combinations:
+{scope_section}
+
 Follow all rules below exactly.
 
 RULES
@@ -52,10 +65,12 @@ RULES
 8. You MUST always write a response in your final message. Never return an empty response.
    Always summarize what was accomplished when the task is complete.
 9. When choosing between entities, use simulate_network_change with compare_scenarios
-   to evaluate all options in a single call. Once you have simulation data, commit to
-   the best option - do not oscillate between simulating and deciding.
+   to evaluate all options in a single call.
 10. Be decisive. After gathering sufficient data, take action. Avoid repeating the same
     reasoning or simulation multiple times.
+11. If the user asks for recommendations, analysis, or evaluation — provide the results
+    and stop. Do NOT add entities unless the user explicitly says "add", "commit", or
+    "go ahead" or similar directive to proceed.
 '''
 
     messages_history = state.get("messages", [])

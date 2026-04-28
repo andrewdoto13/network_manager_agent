@@ -40,59 +40,105 @@ def _miles_to_radians(threshold_miles: float, earth_radius_miles: float = 3958.8
 def _compute_coverage(
     network: list[dict],
     members: list[dict],
-    county_thresholds: dict[str, float],
-) -> list[dict]:
-    """Compute per-county member coverage given a network and member set.
-    
-    Returns a list of dicts sorted by county name, each with keys:
-        county, members_with_access, total_members, coverage_percentage
+    county_specialty_thresholds: dict[str, dict[str, float]],
+    candidates: list[dict] = None,
+) -> tuple[list[dict], list[str]]:
+    """Compute per-county-and-specialty member coverage given a network and member set.
+
+    The scope of analysis is defined by the keys in county_specialty_thresholds.
+    For each (county, specialty) pair, computes what fraction of members in that
+    county can reach a provider of that specialty within the threshold distance.
+
+    Returns a tuple of (coverage_results, validation_errors), where:
+    - coverage_results: list of dicts sorted by (county, specialty), each with keys:
+        county, specialty, members_with_access, total_members, coverage_percentage
+    - validation_errors: list of strings for specialties not found in candidate data
     """
     members_df = pd.DataFrame(members) if members else pd.DataFrame()
     net_df = pd.DataFrame(network) if network else pd.DataFrame()
+    candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
 
     if net_df.empty or members_df.empty:
-        return []
+        return [], []
 
     try:
         m_county = _find_column(members_df, "county")
         m_lat = _find_column(members_df, "lat", ["latitude"])
         m_lon = _find_column(members_df, "lon", ["longitude"])
-        
+
         n_lat = _find_column(net_df, "lat", ["latitude"])
         n_lon = _find_column(net_df, "lon", ["longitude"])
     except KeyError as e:
         raise KeyError(f"Required columns not found: {e}")
 
-    tree = BallTree(_deg2rad(net_df), leaf_size=40, metric="haversine")
+    # Discover specialty column in candidates
+    spec_col = None
+    valid_specialties = set()
+    if not candidates_df.empty:
+        spec_col = next((c for c in candidates_df.columns if c.lower() == "specialty"), None)
+        if spec_col:
+            valid_specialties = set(candidates_df[spec_col].dropna().unique().tolist())
+
+    # Validate specialties against candidate data
+    validation_errors = []
+    for county_val, specialties in county_specialty_thresholds.items():
+        for spec in specialties.keys():
+            if valid_specialties and spec not in valid_specialties:
+                validation_errors.append(
+                    f"Specialty '{spec}' in county '{county_val}' not found in candidate data."
+                )
 
     coverage_results = []
-    for county_val, group in members_df.groupby(m_county):
-        threshold = county_thresholds.get(county_val, 20.0)
-        radius_rad = _miles_to_radians(threshold)
+    for county_val, specialties in county_specialty_thresholds.items():
+        county_members = members_df[members_df[m_county] == county_val]
+        if county_members.empty:
+            continue
 
-        group_pts = _deg2rad(group)
-        indices, _ = tree.query_radius(group_pts, r=radius_rad, return_distance=True)
+        for specialty, threshold in specialties.items():
+            # Filter network providers by specialty
+            if spec_col:
+                specialty_network = net_df[net_df[spec_col] == specialty]
+            else:
+                specialty_network = pd.DataFrame()
 
-        members_with_access = int(np.array([len(lst) > 0 for lst in indices]).sum())
-        total_members = len(group)
-        coverage_percentage = round(members_with_access / total_members * 100, 2)
+            if specialty_network.empty:
+                coverage_results.append({
+                    "county": county_val,
+                    "specialty": specialty,
+                    "members_with_access": 0,
+                    "total_members": len(county_members),
+                    "coverage_percentage": 0.0,
+                })
+                continue
 
-        coverage_results.append({
-            "county": county_val,
-            "members_with_access": members_with_access,
-            "total_members": total_members,
-            "coverage_percentage": coverage_percentage,
-        })
+            radius_rad = _miles_to_radians(threshold)
+            tree = BallTree(_deg2rad(specialty_network), leaf_size=40, metric="haversine")
+            group_pts = _deg2rad(county_members)
+            indices, _ = tree.query_radius(group_pts, r=radius_rad, return_distance=True)
 
-    coverage_results.sort(key=lambda x: x["county"])
-    return coverage_results
+            members_with_access = int(np.array([len(lst) > 0 for lst in indices]).sum())
+            total_members = len(county_members)
+            coverage_percentage = round(members_with_access / total_members * 100, 2)
+
+            coverage_results.append({
+                "county": county_val,
+                "specialty": specialty,
+                "members_with_access": members_with_access,
+                "total_members": total_members,
+                "coverage_percentage": coverage_percentage,
+            })
+
+    coverage_results.sort(key=lambda x: (x["county"], x["specialty"]))
+    return coverage_results, validation_errors
 
 
 
 def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
     """Aggregate provider-level data into entity-level summaries.
     
-    Returns a DataFrame indexed by 'Primary Contract Entity' with aggregated metrics.
+    Returns a DataFrame indexed by 'Primary Contract Entity' with aggregated metrics
+    including effectiveness, efficiency, specialties, provider count, claims volume,
+    and location confidence distribution.
     """
     if not candidates:
         return pd.DataFrame()
@@ -104,6 +150,9 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
     eff_col = next((c for c in df.columns if c.lower() == "effectiveness"), "Effectiveness")
     eta_col = next((c for c in df.columns if c.lower() == "efficiency"), "Efficiency")
     spec_col = next((c for c in df.columns if c.lower() == "specialty"), "Specialty")
+    claims_col = next((c for c in df.columns if c.lower() == "total claims amount"), "Total Claims Amount")
+    medicare_claims_col = next((c for c in df.columns if c.lower() == "medicare total claims amount"), "Medicare Total Claims Amount")
+    confidence_col = next((c for c in df.columns if c.lower() == "location confidence score"), "Location Confidence Score")
 
     if entity_col not in df.columns:
         # If no entity column, treat each provider as its own entity
@@ -121,6 +170,19 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
     # Always count providers per entity
     agg_map[entity_col] = "count"
 
+    # Numeric aggregation for claims volume
+    if claims_col in df.columns:
+        agg_map[claims_col] = lambda x: float(round(x.dropna().mean(), 2)) if x.dropna().any() else None
+    if medicare_claims_col in df.columns:
+        agg_map[medicare_claims_col] = lambda x: float(round(x.dropna().mean(), 2)) if x.dropna().any() else None
+
+    # Categorical distributions for location confidence
+    if confidence_col in df.columns:
+        def confidence_dist(x):
+            dist = x.dropna().value_counts().to_dict()
+            return {k: int(v) for k, v in dist.items()}
+        agg_map[confidence_col] = confidence_dist
+
     agg_df = df.groupby(entity_col).agg(agg_map)
     
     # Rename for consistency
@@ -131,6 +193,12 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
         rename_map[eta_col] = "avg_efficiency"
     if spec_col in df.columns:
         rename_map[spec_col] = "specialties"
+    if claims_col in df.columns:
+        rename_map[claims_col] = "avg_total_claims_amount"
+    if medicare_claims_col in df.columns:
+        rename_map[medicare_claims_col] = "avg_medicare_total_claims_amount"
+    if confidence_col in df.columns:
+        rename_map[confidence_col] = "location_confidence_dist"
         
     return agg_df.rename(columns=rename_map)
 
@@ -255,7 +323,17 @@ def get_candidate_schema(
                 "samples": entity_df[col].head(3).dt.strftime('%Y-%m-%d').tolist(),
             })
         else:  # Categorical / Object
-            if pd.api.types.is_list_like(entity_df[col].iloc[0]) if not entity_df[col].empty else False:
+            first_val = entity_df[col].dropna().iloc[0] if not entity_df[col].dropna().empty else None
+            if isinstance(first_val, dict):
+                # For dict-type columns (e.g., distributions like location_confidence_dist, top_affiliations)
+                # Just show the first sample as a representative distribution
+                sample = first_val
+                col_profile.update({
+                    "type": "dict",
+                    "sample_distribution": {str(k): int(v) for k, v in sample.items()},
+                    "num_keys": int(len(sample)),
+                })
+            elif pd.api.types.is_list_like(first_val):
                 # For list-like columns (e.g., specialties), we count total elements or unique elements across all lists
                 all_vals = [item for sublist in entity_df[col].dropna() for item in sublist]
                 unique_vals = sorted(list(set(all_vals)))
@@ -323,26 +401,30 @@ def add_contract_entity(
 def get_network_status(
     members: Annotated[list[dict], InjectedState("members")],
     network: Annotated[list[dict], InjectedState("network")],
-    county_thresholds: Annotated[dict[str, float], InjectedState("county_thresholds")],
+    county_specialty_thresholds: Annotated[dict[str, dict[str, float]], InjectedState("county_specialty_thresholds")],
+    candidates: Annotated[list[dict], InjectedState("candidates")],
 ) -> dict[str, Any]:
     """Return the current network status including total providers and member coverage.
 
-    - county_thresholds: A dictionary mapping county names to distance thresholds in miles.
-      If a county is not listed, a default threshold of 20.0 miles is used.
+    - county_specialty_thresholds: A nested dictionary mapping county names to specialty
+      -> threshold dicts (e.g. {"wayne": {"cardiologist": 10.0, "pcp": 5.0}}).
+      The scope of analysis is defined by the keys present. Default threshold is 20.0 miles.
 
     Output format:
       {
         "total_providers": int,
         "member_coverage": [
-          {"county": str, "members_with_access": int, "total_members": int, "coverage_percentage": float},
+          {"county": str, "specialty": str, "members_with_access": int, "total_members": int, "coverage_percentage": float},
           ...
-        ]
+        ],
+        "validation_errors": [str, ...]  # specialties not found in candidate data
       }
     """
-    coverage = _compute_coverage(network, members, county_thresholds)
+    coverage, validation_errors = _compute_coverage(network, members, county_specialty_thresholds, candidates)
     return {
         "total_providers": len(network),
         "member_coverage": coverage,
+        "validation_errors": validation_errors,
     }
 
 
@@ -374,15 +456,16 @@ def _compute_delta(
     current_coverage: list[dict],
     simulated_coverage: list[dict],
 ) -> list[dict]:
-    """Compute per-county coverage change between current and simulated."""
-    current_map = {c["county"]: c["coverage_percentage"] for c in current_coverage}
-    sim_map = {c["county"]: c["coverage_percentage"] for c in simulated_coverage}
-    all_counties = sorted(set(list(current_map.keys()) + list(sim_map.keys())))
+    """Compute per-county-and-specialty coverage change between current and simulated."""
+    current_map = {(c["county"], c["specialty"]): c["coverage_percentage"] for c in current_coverage}
+    sim_map = {(c["county"], c["specialty"]): c["coverage_percentage"] for c in simulated_coverage}
+    all_keys = sorted(set(list(current_map.keys()) + list(sim_map.keys())))
     delta = []
-    for county in all_counties:
-        change = round(sim_map.get(county, 0) - current_map.get(county, 0), 2)
+    for county, specialty in all_keys:
+        change = round(sim_map.get((county, specialty), 0) - current_map.get((county, specialty), 0), 2)
         delta.append({
             "county": county,
+            "specialty": specialty,
             "coverage_change": change,
         })
     return delta
@@ -425,7 +508,7 @@ def simulate_network_change(
     candidates: Annotated[list[dict], InjectedState("candidates")],
     network: Annotated[list[dict], InjectedState("network")],
     members: Annotated[list[dict], InjectedState("members")],
-    county_thresholds: Annotated[dict[str, float], InjectedState("county_thresholds")],
+    county_specialty_thresholds: Annotated[dict[str, dict[str, float]], InjectedState("county_specialty_thresholds")],
     compare_scenarios: list[dict] = [],
 ) -> dict[str, Any]:
     """Simulate adding or removing entities and show the coverage impact without modifying the network.
@@ -443,12 +526,12 @@ def simulate_network_change(
         - compare_scenarios: List of {"add_entity_ids": [...], "remove_entity_ids": [...]} dicts (max 5 scenarios).
         - When compare_scenarios is provided, add_entity_ids and remove_entity_ids are ignored.
 
-    Returns current coverage, simulated coverage, and per-county delta (percentage point change).
+    Returns current coverage, simulated coverage, and per-county-specialty delta (percentage point change).
     """
     candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
     network_df = pd.DataFrame(network) if network else pd.DataFrame()
 
-    current_coverage = _compute_coverage(network, members, county_thresholds)
+    current_coverage, current_errors = _compute_coverage(network, members, county_specialty_thresholds, candidates)
 
     if compare_scenarios:
         if len(compare_scenarios) > 5:
@@ -469,7 +552,7 @@ def simulate_network_change(
                 continue
 
             sim_net = _build_sim_network(network_df, candidates_df, sc_add, sc_remove)
-            sim_cov = _compute_coverage(sim_net, members, county_thresholds)
+            sim_cov, sim_errors = _compute_coverage(sim_net, members, county_specialty_thresholds, candidates)
             sc_delta = _compute_delta(current_coverage, sim_cov)
 
             scenario_results.append({
@@ -508,8 +591,10 @@ def simulate_network_change(
         return {"error": "Invalid entities", "details": errors}
 
     sim_net = _build_sim_network(network_df, candidates_df, add_entity_ids, remove_entity_ids)
-    sim_cov = _compute_coverage(sim_net, members, county_thresholds)
+    sim_cov, sim_errors = _compute_coverage(sim_net, members, county_specialty_thresholds, candidates)
     delta = _compute_delta(current_coverage, sim_cov)
+
+    all_validation_errors = list(set(current_errors + sim_errors))
 
     return {
         "current": {
@@ -521,6 +606,7 @@ def simulate_network_change(
             "coverage": sim_cov,
         },
         "delta": delta,
+        "validation_errors": all_validation_errors,
     }
 
 
