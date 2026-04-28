@@ -92,11 +92,18 @@ def get_candidates(
     network_df = pd.DataFrame(network) if network else pd.DataFrame()
     candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
 
-    used_ids = set(network_df.id) if not network_df.empty else set()
+    if candidates_df.empty:
+        return "No available candidates for this specialty."
+
+    # Find columns case-insensitively
+    id_col = next((c for c in candidates_df.columns if c.lower() == "id"), "id")
+    spec_col = next((c for c in candidates_df.columns if c.lower() == "specialty"), "specialty")
+
+    used_ids = set(network_df[id_col]) if not network_df.empty and id_col in network_df.columns else set()
 
     filtered = candidates_df[
-        (candidates_df.specialty == specialty) &
-        (~candidates_df.id.isin(used_ids))
+        (candidates_df[spec_col] == specialty) &
+        (~candidates_df[id_col].isin(used_ids))
     ]
 
     if len(filtered) == 0:
@@ -118,18 +125,50 @@ def get_candidates(
 def get_candidate_schema(
     candidates: Annotated[list[dict], InjectedState("candidates")]
 ):
-    """Return the schema of the candidate data as a dictionary mapping column names to their data types.
+    """Return a rich statistical profile of the candidate data.
 
-    Use this before calling get_candidates to identify valid sort_by column names,
-    or to understand what filtering and prioritization options are available
-    (e.g. ratings, distance, accepting_patients).
+    Use this before calling get_candidates to understand the available 
+    columns, their types, ranges, and distributions. This is essential 
+    for deciding how to sort or filter candidates.
     """
     candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
 
     if candidates_df.empty:
         return "No candidate data available."
 
-    return candidates_df.dtypes.astype(str).to_dict()
+    profile = {}
+    for col in candidates_df.columns:
+        dtype = str(candidates_df[col].dtype)
+        col_profile = {"type": dtype}
+
+        if pd.api.types.is_numeric_dtype(candidates_df[col]):
+            col_profile.update({
+                "min": float(candidates_df[col].min()),
+                "max": float(candidates_df[col].max()),
+                "mean": float(round(candidates_df[col].mean(), 2)),
+                "q1": float(candidates_df[col].quantile(0.25)),
+                "median": float(candidates_df[col].median()),
+                "q3": float(candidates_df[col].quantile(0.75)),
+            })
+        elif pd.api.types.is_bool_dtype(candidates_df[col]):
+            counts = candidates_df[col].value_counts().to_dict()
+            col_profile["counts"] = {str(k): int(v) for k, v in counts.items()}
+        elif pd.api.types.is_datetime64_any_dtype(candidates_df[col]):
+            col_profile.update({
+                "min": str(candidates_df[col].min()),
+                "max": str(candidates_df[col].max()),
+                "samples": candidates_df[col].head(3).dt.strftime('%Y-%m-%d').tolist(),
+            })
+        else:  # Categorical / Object
+            unique_values = candidates_df[col].dropna().unique()
+            col_profile.update({
+                "unique_count": int(len(unique_values)),
+                "distribution": {str(k): int(v) for k, v in candidates_df[col].value_counts().head(5).to_dict().items()},
+            })
+
+        profile[col] = col_profile
+
+    return profile
 
 
 @tool
@@ -150,14 +189,15 @@ def add_provider(
     if candidates_df.empty:
         return "No candidate data available."
 
-    used_ids = set(network_df["id"].values) if not network_df.empty else set()
+    id_col = next((c for c in candidates_df.columns if c.lower() == "id"), "id")
+    used_ids = set(network_df[id_col].values) if not network_df.empty and id_col in network_df.columns else set()
     added: list[dict] = []
     errors: list[str] = []
 
     for pid in ids:
         if pid in used_ids:
             continue
-        match = candidates_df[candidates_df.id == pid]
+        match = candidates_df[candidates_df[id_col] == pid] if id_col in candidates_df.columns else pd.DataFrame()
         if match.empty:
             errors.append(f"Provider {pid} not found in candidates.")
         else:
@@ -206,11 +246,13 @@ def _build_sim_network(
     sim_network = [p for _, p in network_df.iterrows()] if not network_df.empty else []
     sim_network = [p.to_dict() if hasattr(p, "to_dict") else p for p in sim_network]
 
+    id_col = next((c for c in candidates_df.columns if c.lower() == "id"), "id")
+
     for pid in remove_ids:
-        sim_network = [p for p in sim_network if p["id"] != pid]
+        sim_network = [p for p in sim_network if p.get(id_col) != pid]
 
     for pid in add_ids:
-        match = candidates_df[candidates_df.id == pid]
+        match = candidates_df[candidates_df[id_col] == pid] if id_col in candidates_df.columns else pd.DataFrame()
         if not match.empty:
             sim_network.append(match.iloc[0].to_dict())
 
@@ -248,16 +290,17 @@ def _validate_scenario(
     if len(remove_ids) > 5:
         errors.append("remove_ids: maximum 5 providers allowed per scenario.")
 
-    used_ids = set(network_df["id"].values) if not network_df.empty else set()
+    id_col = next((c for c in candidates_df.columns if c.lower() == "id"), "id")
+    used_ids = set(network_df[id_col].values) if not network_df.empty and id_col in network_df.columns else set()
 
     for pid in add_ids:
         if pid in used_ids:
             errors.append(f"Provider {pid} is already in the network.")
-        elif candidates_df.empty or pid not in candidates_df["id"].values:
+        elif candidates_df.empty or (id_col not in candidates_df.columns or pid not in candidates_df[id_col].values):
             errors.append(f"Provider {pid} not found in candidates.")
 
     for pid in remove_ids:
-        if network_df.empty or pid not in network_df["id"].values:
+        if network_df.empty or (id_col not in network_df.columns or pid not in network_df[id_col].values):
             errors.append(f"Provider {pid} is not in the current network.")
 
     return errors

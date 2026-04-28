@@ -139,11 +139,24 @@ class TestTools:
     def test_get_candidate_schema(self):
         candidates = [
             {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5},
+            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3},
+            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4},
         ]
         result = get_candidate_schema.invoke({"candidates": candidates})
         assert isinstance(result, dict)
-        assert "specialty" in result
+        
+        # Check numeric
         assert "effectiveness" in result
+        assert "min" in result["effectiveness"]
+        assert "q3" in result["effectiveness"]
+        assert result["effectiveness"]["mean"] == 4.0
+        
+        # Check categorical
+        assert "specialty" in result
+        assert "unique_count" in result["specialty"]
+        assert result["specialty"]["unique_count"] == 2
+        assert "hospital" in result["specialty"]["distribution"]
+        assert result["specialty"]["distribution"]["hospital"] == 2
 
     def test_get_candidate_schema_empty(self):
         result = get_candidate_schema.invoke({"candidates": []})
