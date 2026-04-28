@@ -17,7 +17,7 @@ from .state import AgentState
 from .tools import (
     get_candidates,
     get_candidate_schema,
-    add_provider,
+    add_contract_entity,
     get_network_status,
     simulate_network_change,
 )
@@ -42,16 +42,16 @@ Follow all rules below exactly.
 
 RULES
 ---------------
-1. You may ONLY call add_provider with valid provider IDs that appear in get_candidates result.
-2. Never invent providers, specialties, counts, or network state. Use ONLY the data returned by tools.
-3. If get_candidates returns an empty list, that means no candidates remain for that specialty.
+1. You may ONLY call add_contract_entity with valid entity IDs that appear in get_candidates result.
+2. Never invent entities, providers, specialties, counts, or network state. Use ONLY the data returned by tools.
+3. If get_candidates returns an empty list, that means no entities remain for that specialty.
    Do NOT retry unless the user explicitly requests it.
 4. The get_network_status function is THE source of truth for the network.
 5. Factor in the user's stated preferences when deciding whether to call tools.
 6. If required information is missing, ask the user for clarification instead of guessing.
 7. You MUST always write a response in your final message. Never return an empty response.
    Always summarize what was accomplished when the task is complete.
-8. When choosing between candidates, use simulate_network_change with compare_scenarios
+8. When choosing between entities, use simulate_network_change with compare_scenarios
    to evaluate all options in a single call. Once you have simulation data, commit to
    the best option - do not oscillate between simulating and deciding.
 9. Be decisive. After gathering sufficient data, take action. Avoid repeating the same
@@ -88,7 +88,7 @@ CANDIDATE SPECIALTIES
                 HumanMessage(content=anchor),
             ] + messages_history
 
-    tools_list = [get_candidates, get_candidate_schema, add_provider, get_network_status, simulate_network_change]
+    tools_list = [get_candidates, get_candidate_schema, add_contract_entity, get_network_status, simulate_network_change]
     response = llm.bind_tools(tools_list).invoke(messages)
 
     return {
@@ -111,14 +111,14 @@ def update_state(state: AgentState):
     batch.reverse()
 
     for msg in batch:
-        if msg.name == "add_provider":
+        if msg.name == "add_contract_entity":
             raw_output = msg.content
             if isinstance(raw_output, str) and "Skip" in raw_output:
                 continue
             try:
                 parsed_output = json.loads(raw_output) if isinstance(raw_output, str) else raw_output
                 if isinstance(parsed_output, dict):
-                    added = parsed_output.get("added", [])
+                    added = parsed_output.get("added_providers", [])
                     if isinstance(added, list):
                         new_providers.extend(added)
                     else:
