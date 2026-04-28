@@ -74,3 +74,6 @@ ENV/
 react_agent_actions_*.txt
 *.log
 
+# Opencode
+.opencode/
+
