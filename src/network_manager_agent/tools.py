@@ -205,24 +205,35 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
 
 @tool
 def get_candidates(
-    specialty: str,
     candidates: Annotated[list[dict], InjectedState("candidates")],
     network: Annotated[list[dict], InjectedState("network")],
+    specialties: list[str] = None,
     sort_by: str = "none",
     ascending: bool = True,
+    limit: int = 5,
+    weighted_metrics: dict[str, float] = None,
 ):
-    """Return up to 5 contract entities that have at least one provider with the given specialty and are not yet in the network.
+    """Return up to [limit] contract entities that have at least one provider with the requested specialties and are not yet in the network.
 
     - sort_by: IMPORTANT - sorts the ENTITIES based on their aggregated metrics (e.g., 'avg_effectiveness', 'provider_count').
       To prioritize high-quality groups, use sort_by='avg_effectiveness' with ascending=False.
     - ascending: if True, sort lowest-first; if False, sort highest-first.
-    Returns a message if no entities remain for that specialty.
+    - weighted_metrics: A dictionary of {metric_name: weight} to create a custom balanced score. 
+      Example: {"avg_effectiveness": 0.7, "provider_count": 0.3}.
+    - limit: The maximum number of entities to return.
+    Returns a message if no entities remain for the requested specialties.
     """
     candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
     network_df = pd.DataFrame(network) if network else pd.DataFrame()
 
     if candidates_df.empty:
-        return "No available candidates for this specialty."
+        return "No available candidates."
+
+    # Handle specialties input
+    if specialties is None:
+        return "No specialties provided."
+    
+    target_specialties = specialties
 
     # Case-insensitive column discovery
     id_col = next((c for c in candidates_df.columns if c.lower() == "id"), "id")
@@ -231,15 +242,10 @@ def get_candidates(
 
     used_ids = set(network_df[id_col]) if not network_df.empty and id_col in network_df.columns else set()
     
-    # We consider an entity 'used' if ANY of its providers are in the network
-    # But real-world payers usually contract the whole group. 
-    # For this tool, let's assume an entity is in the network if it's already been added.
-    # To be safe, we check if any provider of the entity is in the network.
-    
     # 1. Find entities that have the specialty
-    eligible_providers = candidates_df[candidates_df[spec_col] == specialty]
+    eligible_providers = candidates_df[candidates_df[spec_col].isin(target_specialties)]
     if eligible_providers.empty:
-        return "No available candidates for this specialty."
+        return f"No available candidates for the requested specialties: {target_specialties}."
         
     eligible_entities = set(eligible_providers[entity_col].dropna().unique())
     
@@ -247,23 +253,36 @@ def get_candidates(
     if not network_df.empty and entity_col in network_df.columns:
         used_entities = set(network_df[entity_col].unique())
         eligible_entities = eligible_entities - used_entities
-
+    
     if not eligible_entities:
-        return "No available entities for this specialty."
-
+        return "No available entities for these specialties."
+    
     # 3. Get aggregated summaries for these entities
     entity_summaries = _aggregate_entities(candidates)
     filtered_entities = entity_summaries.loc[list(eligible_entities)]
-
-    if sort_by != "none":
+    
+    if weighted_metrics:
+        def calculate_score(row):
+            score = 0.0
+            for metric, weight in weighted_metrics.items():
+                if metric in row:
+                    val = row[metric]
+                    if pd.isna(val) or val is None:
+                        val = 0.0
+                    score += float(val) * weight
+            return score
+        
+        filtered_entities["_score"] = filtered_entities.apply(calculate_score, axis=1)
+        filtered_entities = filtered_entities.sort_values(by="_score", ascending=ascending)
+    elif sort_by != "none":
         if sort_by in filtered_entities.columns:
             filtered_entities = filtered_entities.sort_values(by=sort_by, ascending=ascending)
         else:
             return f"Invalid sort_by value '{sort_by}'. Valid entity metrics are: {list(filtered_entities.columns)}"
-
-    if len(filtered_entities) > 5:
-        filtered_entities = filtered_entities.head(5)
-
+    
+    if len(filtered_entities) > limit:
+        filtered_entities = filtered_entities.head(limit)
+    
     # 4. Convert to Entity Summary Objects
     results = []
     for entity_id, row in filtered_entities.iterrows():
@@ -279,7 +298,7 @@ def get_candidates(
             },
             "summary": f"Entity '{entity_id}' has {int(row['provider_count'])} providers with an average effectiveness of {round(row['avg_effectiveness'], 2) if 'avg_effectiveness' in row else 'N/A'}."
         })
-
+    
     return results
 
 
