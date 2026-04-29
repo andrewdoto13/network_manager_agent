@@ -96,7 +96,7 @@ class TestTools:
             {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Primary Contract Entity": "Entity A"},
         ]
         result = get_candidates.invoke({
-            "specialty": "hospital",
+            "specialties": ["hospital"],
             "candidates": candidates,
             "network": [],
         })
@@ -113,7 +113,7 @@ class TestTools:
         ]
         # First call
         result1 = get_candidates.invoke({
-            "specialty": "hospital",
+            "specialties": ["hospital"],
             "candidates": candidates,
             "network": [],
         })
@@ -125,7 +125,7 @@ class TestTools:
         
         # Second call should exclude already-added entities
         result2 = get_candidates.invoke({
-            "specialty": "hospital",
+            "specialties": ["hospital"],
             "candidates": candidates,
             "network": network,
         })
@@ -136,7 +136,7 @@ class TestTools:
     def test_get_candidates_returns_message_when_none_available(self):
         candidates = [{"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "Primary Contract Entity": "Entity A"}]
         result = get_candidates.invoke({
-            "specialty": "hospital",
+            "specialties": ["hospital"],
             "candidates": candidates,
             "network": [candidates[0]],
         })
