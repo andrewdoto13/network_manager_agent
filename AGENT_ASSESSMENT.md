@@ -12,7 +12,7 @@ A comprehensive review of the core modules (`config.py`, `data.py`, `state.py`, 
 ## Current State
 - **Testing**: 100% pass rate (42/42 tests).
 - **Framework**: Built on LangGraph using a ReAct pattern.
-- **Core Tools**: `get_candidate_schema`, `get_candidates`, `add_contract_entity`, `get_network_status`, `simulate_network_change`.
+- **Core Tools**: `get_candidates`, `add_contract_entity`, `get_network_status`, `simulate_network_change`.
 - **Geo-Logic**: Coverage computed via BallTree with haversine distance.
 - **Memory**: Context summarization triggers after 14 messages, archiving the first 7.
 
@@ -30,24 +30,19 @@ The use of `compare_scenarios` allows the agent to evaluate and rank multiple en
 The geospatial calculations are verified as correct, providing accurate member coverage percentages for complex entity distributions.
 
 ## Future Improvements & Technical Debt
-### 1. Candidate Data Under-utilization (High Priority)
-The `get_candidates` tool currently discards rich data available in the dataset.
-- **Gap**: Claims volume, institutional affiliations, and "new patient" acceptance rates are not exposed to the LLM.
-- **Fix**: Enhance aggregation logic to include these metrics in the tool output.
-
-### 2. Ranking Bias (Heavy Hitters)
+### 1. Ranking Bias (Heavy Hitters)
 The ranking currently favors entities with the highest total coverage delta, often leading to "heavy hitter" picks rather than a balanced network.
 - **Fix**: Implement a balanced ranking metric or a minimum coverage floor per specialty.
 
-### 3. Geographic Sanity Check
+### 2. Geographic Sanity Check
 The agent does not flag entities that are national in scale but have poor concentration in the target county.
 - **Fix**: Add a check comparing provider concentration to member density.
 
-### 4. Data Quality Integration
-The `location_confidence_dist` is computed but ignored by the agent.
-- **Fix**: Incorporate confidence scores into the ranking metric or add a filtering tool for low-confidence data.
+### 3. Data Quality Integration
+The `location_confidence_dist` is now exposed to the agent via the system prompt and tool outputs, but the agent may still ignore it during reasoning.
+- **Fix**: Provide explicit instructions in the system prompt to penalize low-confidence data.
 
-### 5. Summarization Loss
+### 4. Summarization Loss
 The current summarization process may drop key numerical results (deltas, percentages).
 - **Fix**: Update the summarization prompt to explicitly preserve key numerical values.
 

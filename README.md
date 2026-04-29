@@ -6,19 +6,19 @@ AI Agent that performs provider network management and optimization using LangGr
 
 This project implements a ReAct (Reasoning + Acting) agent that manages a healthcare provider network. The agent:
 
-- Loads candidate providers (hospitals) and member location data
-- Uses an LLM to reason about which providers to add to the network
-- Tracks network coverage of members within a distance threshold
-- Optimizes provider selection based on criteria like effectiveness ratings
+- Loads candidate providers and member location data.
+- Uses an LLM to reason about which providers to add to the network based on coverage, quality, and accessibility.
+- Tracks network coverage of members within a distance threshold.
+- Simulates network changes to evaluate the impact of adding or removing entities before committing.
 
 ## Architecture
 
 The agent is built with [LangGraph](https://langchain-ai.github.io/langgraph/) and consists of:
 
-- **State**: Defines the agent's state including candidates, members, current network, and conversation history
-- **Tools**: `get_candidates`, `get_candidate_schema`, `add_provider`, `get_network_status`
-- **Nodes**: `network_manager` (LLM reasoning), `tools` (tool execution), `update_state`, `summarize_messages` (context management)
-- **Graph**: START → network_manager → [tools → update_state → {summarize_messages | continue}] → END
+- **State**: Defines the agent's state including candidates, members, current network, and conversation history.
+- **Tools**: `get_candidates`, `add_contract_entity`, `get_network_status`, `simulate_network_change`.
+- **Nodes**: `network_manager` (LLM reasoning), `tools` (tool execution), `update_state`, `summarize_messages` (context management).
+- **Graph**: START → network_manager → [tools → update_state → {summarize_messages | continue}] → END.
 
 ## Installation
 
@@ -28,9 +28,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies
-pip install -e .
-
-# Install dev dependencies (optional)
 pip install -e ".[dev]"
 ```
 
@@ -45,7 +42,7 @@ cd notebooks
 jupyter lab react_agent.ipynb
 ```
 
-### CLI (after extracting to source)
+### CLI
 
 ```bash
 python -m network_manager_agent.main
@@ -53,23 +50,11 @@ python -m network_manager_agent.main
 
 ## Data Format
 
-### `data/raw/hospitals.csv`
-| Column | Type | Description |
-|--------|------|-------------|
-| id | int | Provider ID |
-| lat | float | Latitude |
-| lon | float | Longitude |
-| cluster | str | Geographic cluster name |
-| county | str | County |
-| specialty | str | Provider specialty |
-| effectiveness | int | Quality rating (1-5) |
+### Candidates (`data/raw/mi_market_data.csv`)
+Includes provider-level metrics such as `Effectiveness`, `Efficiency`, `Medicare New Patient Claims`, and `Total Claims Volume`. These are aggregated at the entity level for the agent's decision-making.
 
-### `data/raw/members.csv`
-| Column | Type | Description |
-|--------|------|-------------|
-| lat | float | Member latitude |
-| lon | float | Member longitude |
-| county | str | Member county |
+### Members (`data/raw/members.csv`)
+Includes member coordinates and county information.
 
 ## Project Structure
 
@@ -77,18 +62,22 @@ python -m network_manager_agent.main
 .
 ├── pyproject.toml          # Project configuration and dependencies
 ├── README.md               # This file
-├── .gitignore
-├── src/                    # Source code (importable package)
-│           └── network_manager_agent/
-│       ├── __init__.py
-│       ├── agent.py        # State, tools, graph definition
+├── AGENTS.md               # Agent instructions
+├── AGENT_ASSESSMENT.md     # Technical assessment of the agent
+├── src/                    # Source code
+│   └── network_manager_agent/
 │       ├── config.py       # LLM and agent configuration
-│       └── main.py         # Entry point
+│       ├── data.py         # Data loading utilities
+│       ├── graph.py        # Graph orchestration and flow
+│       ├── main.py         # Entry point
+│       ├── nodes.py        # Node implementations
+│       ├── state.py        # Agent state definition
+│       └── tools.py        # Tool definitions and logic
 ├── notebooks/              # Interactive development notebooks
 │   └── react_agent.ipynb
 ├── data/                   # Data files
 │   └── raw/
-│       ├── hospitals.csv
+│       ├── mi_market_data.csv
 │       └── members.csv
 └── tests/                  # Test suite
     └── test_agent.py

@@ -7,7 +7,6 @@ from network_manager_agent.data import load_candidates, load_members, load_data
 from network_manager_agent.state import AgentState
 from network_manager_agent.tools import (
     get_candidates,
-    get_candidate_schema,
     add_contract_entity,
     get_network_status,
     simulate_network_change,
@@ -91,9 +90,9 @@ class TestTools:
 
     def test_get_candidates_filters_by_specialty(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
-            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Primary Contract Entity": "Entity A"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A", "Primary Institutional Affiliation": "Health System A", "Medicare New Patient Claims": "Yes", "Total Claims Volume": "Core", "City": "City A"},
+            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B", "Primary Institutional Affiliation": "Health System B", "Medicare New Patient Claims": "No", "Total Claims Volume": "Standard", "City": "City B"},
+            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Primary Contract Entity": "Entity A", "Primary Institutional Affiliation": "Health System A", "Medicare New Patient Claims": "Yes", "Total Claims Volume": "Standard", "City": "City A"},
         ]
         result = get_candidates.invoke({
             "specialties": ["hospital"],
@@ -105,6 +104,10 @@ class TestTools:
         for e in result:
             assert "entity_id" in e
             assert "hospital" in e["capabilities"]["specialties"]
+            # Verify new metrics
+            assert "new_patient_rate" in e["metrics"]
+            assert "geographic_reach" in e["metrics"]
+
 
     def test_get_candidates_excludes_network(self):
         candidates = [
@@ -142,33 +145,6 @@ class TestTools:
         })
         assert isinstance(result, str)
         assert "No available entities" in result
-
-    def test_get_candidate_schema(self):
-        candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
-            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Primary Contract Entity": "Entity A"},
-        ]
-        result = get_candidate_schema.invoke({"candidates": candidates})
-        assert isinstance(result, dict)
-        
-        # Check entity-level numeric
-        assert "avg_effectiveness" in result
-        assert "min" in result["avg_effectiveness"]
-        assert "q3" in result["avg_effectiveness"]
-        
-        # Check entity size
-        assert "provider_count" in result
-        assert "unique_count" not in result["provider_count"] # It's numeric
-        assert "min" in result["provider_count"]
-        
-        # Check categorical (specialties is now a list per entity, so it's handled as 'object' in the profile)
-        assert "specialties" in result
-        assert "unique_count" in result["specialties"]
-
-    def test_get_candidate_schema_empty(self):
-        result = get_candidate_schema.invoke({"candidates": []})
-        assert result == "No candidate data available."
 
     def test_add_contract_entity(self):
         candidates = [

@@ -16,7 +16,7 @@ from .config import SUMMARIZE_THRESHOLD, MESSAGES_TO_ARCHIVE
 from .state import AgentState
 from .tools import (
     get_candidates,
-    get_candidate_schema,
+    get_candidate_schema_profile,
     add_contract_entity,
     get_network_status,
     simulate_network_change,
@@ -42,6 +42,11 @@ def network_manager(state: AgentState, llm: ChatOpenAI):
         scope_lines.append(f"- {county}: {spec_str}")
     scope_section = "\n".join(scope_lines) if scope_lines else ""
 
+    # Inject candidate schema into system prompt
+    candidates = state.get("candidates", [])
+    schema_profile = get_candidate_schema_profile(candidates)
+    schema_section = json.dumps(schema_profile, indent=2) if schema_profile else "No schema available."
+
     system_message_content = f'''
 You are an assistant responsible for managing a healthcare provider network.
 You MUST use the available tools to update the network state.
@@ -50,25 +55,28 @@ NETWORK SCOPE
 You are evaluating member coverage for these county-specialty combinations:
 {scope_section}
 
+CANDIDATE DATA SCHEMA
+The following is the statistical profile of the available candidate entities:
+{schema_section}
+
 Follow all rules below exactly.
 
 RULES
 ---------------
-1. You MUST call get_candidate_schema as your first action in any new task to discover the available specialties and the exact column names of the current dataset.
-2. You may ONLY call add_contract_entity with valid entity IDs that appear in get_candidates result.
-3. Never invent entities, providers, specialties, counts, or network state. Use ONLY the data returned by tools.
-4. If get_candidates returns an empty list, that means no entities remain for that specialty.
+1. You may ONLY call add_contract_entity with valid entity IDs that appear in get_candidates result.
+2. Never invent entities, providers, specialties, counts, or network state. Use ONLY the data returned by tools.
+3. If get_candidates returns an empty list, that means no entities remain for that specialty.
    Do NOT retry unless the user explicitly requests it.
-5. The get_network_status function is THE source of truth for the network.
-6. Factor in the user's stated preferences when deciding whether to call tools.
-7. If required information is missing, ask the user for clarification instead of guessing.
-8. You MUST always write a response in your final message. Never return an empty response.
+4. The get_network_status function is THE source of truth for the network.
+5. Factor in the user's stated preferences when deciding whether to call tools.
+6. If required information is missing, ask the user for clarification instead of guessing.
+7. You MUST always write a response in your final message. Never return an empty response.
    Always summarize what was accomplished when the task is complete.
-9. When choosing between entities, use simulate_network_change with compare_scenarios
+8. When choosing between entities, use simulate_network_change with compare_scenarios
    to evaluate all options in a single call.
-10. Be decisive. After gathering sufficient data, take action. Avoid repeating the same
+9. Be decisive. After gathering sufficient data, take action. Avoid repeating the same
     reasoning or simulation multiple times.
-11. If the user asks for recommendations, analysis, or evaluation — provide the results
+10. If the user asks for recommendations, analysis, or evaluation — provide the results
     and stop. Do NOT add entities unless the user explicitly says "add", "commit", or
     "go ahead" or similar directive to proceed.
 '''
@@ -100,7 +108,7 @@ RULES
                 HumanMessage(content=anchor),
             ] + messages_history
 
-    tools_list = [get_candidates, get_candidate_schema, add_contract_entity, get_network_status, simulate_network_change]
+    tools_list = [get_candidates, add_contract_entity, get_network_status, simulate_network_change]
     response = llm.bind_tools(tools_list).invoke(messages)
 
     return {

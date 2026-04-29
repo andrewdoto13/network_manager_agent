@@ -153,6 +153,9 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
     claims_col = next((c for c in df.columns if c.lower() == "total claims amount"), "Total Claims Amount")
     medicare_claims_col = next((c for c in df.columns if c.lower() == "medicare total claims amount"), "Medicare Total Claims Amount")
     confidence_col = next((c for c in df.columns if c.lower() == "location confidence score"), "Location Confidence Score")
+    new_pat_col = next((c for c in df.columns if c.lower() == "medicare new patient claims"), "Medicare New Patient Claims")
+    claims_vol_col = next((c for c in df.columns if c.lower() == "total claims volume"), "Total Claims Volume")
+    city_col = next((c for c in df.columns if c.lower() == "city"), "City")
 
     if entity_col not in df.columns:
         # If no entity column, treat each provider as its own entity
@@ -167,6 +170,16 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
     if spec_col in df.columns:
         agg_map[spec_col] = lambda x: list(set(x.dropna()))
     
+    if new_pat_col in df.columns:
+        agg_map[new_pat_col] = lambda x: float(round((x == 'Yes').mean() * 100, 2)) if not x.empty else None
+    if claims_vol_col in df.columns:
+        def vol_dist(x):
+            dist = x.dropna().value_counts().to_dict()
+            return {k: int(v) for k, v in dist.items()}
+        agg_map[claims_vol_col] = vol_dist
+    if city_col in df.columns:
+        agg_map[city_col] = "nunique"
+
     # Always count providers per entity
     agg_map[entity_col] = "count"
 
@@ -199,6 +212,12 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
         rename_map[medicare_claims_col] = "avg_medicare_total_claims_amount"
     if confidence_col in df.columns:
         rename_map[confidence_col] = "location_confidence_dist"
+    if new_pat_col in df.columns:
+        rename_map[new_pat_col] = "new_patient_rate"
+    if claims_vol_col in df.columns:
+        rename_map[claims_vol_col] = "claims_volume_dist"
+    if city_col in df.columns:
+        rename_map[city_col] = "geographic_reach"
         
     return agg_df.rename(columns=rename_map)
 
@@ -215,11 +234,12 @@ def get_candidates(
 ):
     """Return up to [limit] contract entities that have at least one provider with the requested specialties and are not yet in the network.
 
-    - sort_by: IMPORTANT - sorts the ENTITIES based on their aggregated metrics (e.g., 'avg_effectiveness', 'provider_count').
+    - sort_by: IMPORTANT - sorts the ENTITIES based on their aggregated metrics (e.g., 'avg_effectiveness', 'provider_count', 'new_patient_rate', 'avg_total_claims_amount').
       To prioritize high-quality groups, use sort_by='avg_effectiveness' with ascending=False.
+      To prioritize accessibility, use sort_by='new_patient_rate' with ascending=False.
     - ascending: if True, sort lowest-first; if False, sort highest-first.
     - weighted_metrics: A dictionary of {metric_name: weight} to create a custom balanced score. 
-      Example: {"avg_effectiveness": 0.7, "provider_count": 0.3}.
+      Example: {"avg_effectiveness": 0.7, "new_patient_rate": 0.3}.
     - limit: The maximum number of entities to return.
     Returns a message if no entities remain for the requested specialties.
     """
@@ -292,31 +312,27 @@ def get_candidates(
                 "avg_effectiveness": round(row["avg_effectiveness"], 2) if "avg_effectiveness" in row else None,
                 "avg_efficiency": round(row["avg_efficiency"], 2) if "avg_efficiency" in row else None,
                 "provider_count": int(row["provider_count"]),
+                "avg_total_claims": round(row["avg_total_claims_amount"], 2) if "avg_total_claims_amount" in row else None,
+                "avg_medicare_claims": round(row["avg_medicare_total_claims_amount"], 2) if "avg_medicare_total_claims_amount" in row else None,
+                "new_patient_rate": round(row["new_patient_rate"], 2) if "new_patient_rate" in row else None,
+                "geographic_reach": int(row["geographic_reach"]) if "geographic_reach" in row else None,
+                "location_confidence": row["location_confidence_dist"] if "location_confidence_dist" in row else None,
             },
             "capabilities": {
                 "specialties": row["specialties"] if "specialties" in row else [],
             },
-            "summary": f"Entity '{entity_id}' has {int(row['provider_count'])} providers with an average effectiveness of {round(row['avg_effectiveness'], 2) if 'avg_effectiveness' in row else 'N/A'}."
         })
     
     return results
 
 
 
-@tool
-def get_candidate_schema(
-    candidates: Annotated[list[dict], InjectedState("candidates")]
-):
-    """Return a rich statistical profile of the contract entity data.
-
-    Use this before calling get_candidates to understand the available 
-    entities, their average quality, and their size. This is essential 
-    for deciding how to sort or filter entities.
-    """
+def get_candidate_schema_profile(candidates: list[dict]) -> dict:
+    """Compute a rich statistical profile of the contract entity data."""
     entity_df = _aggregate_entities(candidates)
 
     if entity_df.empty:
-        return "No candidate data available."
+        return {}
 
     profile = {}
     for col in entity_df.columns:
@@ -344,16 +360,19 @@ def get_candidate_schema(
         else:  # Categorical / Object
             first_val = entity_df[col].dropna().iloc[0] if not entity_df[col].dropna().empty else None
             if isinstance(first_val, dict):
-                # For dict-type columns (e.g., distributions like location_confidence_dist, top_affiliations)
-                # Just show the first sample as a representative distribution
-                sample = first_val
+                # Aggregate all distributions in the column
+                full_dist = {}
+                for val in entity_df[col].dropna():
+                    if isinstance(val, dict):
+                        for k, v in val.items():
+                            full_dist[str(k)] = full_dist.get(str(k), 0) + v
+                
                 col_profile.update({
                     "type": "dict",
-                    "sample_distribution": {str(k): int(v) for k, v in sample.items()},
-                    "num_keys": int(len(sample)),
+                    "distribution": {k: int(v) for k, v in full_dist.items()},
+                    "num_keys": int(len(full_dist)),
                 })
             elif pd.api.types.is_list_like(first_val):
-                # For list-like columns (e.g., specialties), we count total elements or unique elements across all lists
                 all_vals = [item for sublist in entity_df[col].dropna() for item in sublist]
                 unique_vals = sorted(list(set(all_vals)))
                 col_profile.update({
@@ -369,14 +388,13 @@ def get_candidate_schema(
                     "distribution": {str(k): int(v) for k, v in entity_df[col].value_counts().head(5).to_dict().items()},
                 })
 
-
         profile[col] = col_profile
 
     return profile
 
-
 @tool
 def add_contract_entity(
+
     entity_ids: list[str],
     network: Annotated[list[dict], InjectedState("network")],
     candidates: Annotated[list[dict], InjectedState("candidates")],
@@ -630,4 +648,4 @@ def simulate_network_change(
 
 
 
-TOOLS = [get_candidates, get_candidate_schema, add_contract_entity, get_network_status, simulate_network_change]
+TOOLS = [get_candidates, add_contract_entity, get_network_status, simulate_network_change]
