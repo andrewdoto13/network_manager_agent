@@ -3,7 +3,6 @@
 import argparse
 import json
 import sys
-import pandas as pd
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
@@ -17,7 +16,6 @@ from .tools import (
 )
 from .graph import build_agent
 from .ui import run_agent
-from .schema import SchemaMapper
 
 
 def run_agent_session(agent, prompt, candidates, members, thresholds, summaries, profile, thread_config):
@@ -104,11 +102,8 @@ def main():
     )
 
     # Pre-compute: filter by service area, aggregate entities, build schema
-    # Initialize SchemaMapper first to use it in filter
-    schema_mapper = SchemaMapper(pd.DataFrame(candidates))
-    
     filtered_candidates = _filter_by_service_area(
-        candidates, members, county_specialty_thresholds, schema_mapper
+        candidates, members, county_specialty_thresholds
     )
     
     entity_summaries = precompute_entity_summaries(filtered_candidates)

@@ -94,9 +94,9 @@ class TestTools:
 
     def test_get_candidates_filters_by_specialty(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A", "Primary Institutional Affiliation": "Health System A", "Medicare New Patient Claims": "Yes", "Total Claims Volume": "Core", "City": "City A"},
-            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B", "Primary Institutional Affiliation": "Health System B", "Medicare New Patient Claims": "No", "Total Claims Volume": "Standard", "City": "City B"},
-            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Primary Contract Entity": "Entity A", "Primary Institutional Affiliation": "Health System A", "Medicare New Patient Claims": "Yes", "Total Claims Volume": "Standard", "City": "City A"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A", "Primary Institutional Affiliation": "Health System A", "new_patient_claims": "Yes", "claims_volume": "Core", "City": "City A"},
+            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "entity": "Entity B", "Primary Institutional Affiliation": "Health System B", "new_patient_claims": "No", "claims_volume": "Standard", "City": "City B"},
+            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "entity": "Entity A", "Primary Institutional Affiliation": "Health System A", "new_patient_claims": "Yes", "claims_volume": "Standard", "City": "City A"},
         ]
         entity_summaries = precompute_entity_summaries(candidates)
         result = get_candidates.invoke({
@@ -117,8 +117,8 @@ class TestTools:
 
     def test_get_candidates_excludes_network(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "entity": "Entity B"},
         ]
         entity_summaries = precompute_entity_summaries(candidates)
         # First call
@@ -132,7 +132,7 @@ class TestTools:
         # result1 is a list of entity summaries
         network_entity = result1[0]["entity_id"]
         # To simulate the entity being in network, we add its providers
-        network = [p for p in candidates if p["Primary Contract Entity"] == network_entity]
+        network = [p for p in candidates if p["entity"] == network_entity]
 
         # Second call should exclude already-added entities
         result2 = get_candidates.invoke({
@@ -146,7 +146,7 @@ class TestTools:
             assert network_entity not in result2_ids
 
     def test_get_candidates_returns_message_when_none_available(self):
-        candidates = [{"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "Primary Contract Entity": "Entity A"}]
+        candidates = [{"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "entity": "Entity A"}]
         entity_summaries = precompute_entity_summaries(candidates)
         result = get_candidates.invoke({
             "specialties": ["hospital"],
@@ -159,8 +159,8 @@ class TestTools:
 
     def test_add_contract_entity(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 4, "Primary Contract Entity": "Entity A"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 4, "entity": "Entity A"},
         ]
         result = add_contract_entity.invoke({
             "entity_ids": ["Entity A"],
@@ -174,8 +174,8 @@ class TestTools:
 
     def test_add_contract_entity_batch(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "entity": "Entity B"},
         ]
         result = add_contract_entity.invoke({
             "entity_ids": ["Entity A", "Entity B"],
@@ -186,7 +186,7 @@ class TestTools:
         assert {p["id"] for p in result["added_providers"]} == {1, 2}
 
     def test_add_contract_entity_already_in_network(self):
-        provider = {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "Primary Contract Entity": "Entity A"}
+        provider = {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "entity": "Entity A"}
         result = add_contract_entity.invoke({
             "entity_ids": ["Entity A"],
             "candidates": [provider],
@@ -198,7 +198,7 @@ class TestTools:
     def test_add_contract_entity_not_found(self):
         result = add_contract_entity.invoke({
             "entity_ids": ["Entity Z"],
-            "candidates": [{"id": 1, "Primary Contract Entity": "Entity A"}],
+            "candidates": [{"id": 1, "entity": "Entity A"}],
             "network": [],
         })
         assert "errors" in result
@@ -206,8 +206,8 @@ class TestTools:
 
     def test_add_contract_entity_mixed(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "entity": "Entity B"},
         ]
         result = add_contract_entity.invoke({
             "entity_ids": ["Entity A", "Entity B", "Entity Z"],
@@ -266,11 +266,11 @@ class TestSimulateNetworkChange:
             {"id": 2, "lat": 42.4, "lon": -83.3, "county": "wayne"},
         ]
         network = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
         ]
         candidates = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "Primary Contract Entity": "Entity B"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "entity": "Entity B"},
         ]
         result = simulate_network_change.invoke({
             "add_entity_ids": ["Entity B"],
@@ -291,8 +291,8 @@ class TestSimulateNetworkChange:
             {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
         ]
         network = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "Primary Contract Entity": "Entity B"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "entity": "Entity B"},
         ]
         candidates = network.copy()
         result = simulate_network_change.invoke({
@@ -311,11 +311,11 @@ class TestSimulateNetworkChange:
             {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
         ]
         network = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
         ]
         candidates = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "Primary Contract Entity": "Entity B"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "entity": "Entity B"},
         ]
         result = simulate_network_change.invoke({
             "add_entity_ids": ["Entity B"],
@@ -330,10 +330,10 @@ class TestSimulateNetworkChange:
 
     def test_simulate_invalid_add_already_in_network(self):
         network = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
         ]
         candidates = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
         ]
         result = simulate_network_change.invoke({
             "add_entity_ids": ["Entity A"],
@@ -375,7 +375,7 @@ class TestSimulateNetworkChange:
             "add_entity_ids": [],
             "remove_entity_ids": ["E1", "E2", "E3", "E4", "E5", "E6"],
             "candidates": [],
-            "network": [{"id": i, "lat": 42.0, "lon": -83.0, "Primary Contract Entity": f"E{i}"} for i in range(1, 7)],
+            "network": [{"id": i, "lat": 42.0, "lon": -83.0, "entity": f"E{i}"} for i in range(1, 7)],
             "members": [],
             "county_specialty_thresholds": {},
         })
@@ -388,11 +388,11 @@ class TestSimulateNetworkChange:
             {"id": 2, "lat": 42.4, "lon": -83.3, "county": "oakland"},
         ]
         network = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
         ]
         candidates = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "Primary Contract Entity": "Entity B"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "entity": "Entity B"},
         ]
         result = simulate_network_change.invoke({
             "add_entity_ids": ["Entity B"],
@@ -417,9 +417,9 @@ class TestSimulateNetworkChange:
         ]
         network = []
         candidates = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "Primary Contract Entity": "Entity B"},
-            {"id": 3, "lat": 42.0, "lon": -83.0, "specialty": "hospital", "Primary Contract Entity": "Entity C"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "entity": "Entity B"},
+            {"id": 3, "lat": 42.0, "lon": -83.0, "specialty": "hospital", "entity": "Entity C"},
         ]
         result = simulate_network_change.invoke({
             "add_entity_ids": [],
@@ -446,11 +446,11 @@ class TestSimulateNetworkChange:
             {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
         ]
         network = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "Primary Contract Entity": "Entity B"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "entity": "Entity B"},
         ]
         candidates = [
-            {"id": 3, "lat": 42.0, "lon": -83.0, "specialty": "hospital", "Primary Contract Entity": "Entity C"},
+            {"id": 3, "lat": 42.0, "lon": -83.0, "specialty": "hospital", "entity": "Entity C"},
         ]
         result = simulate_network_change.invoke({
             "add_entity_ids": [],
@@ -508,7 +508,7 @@ class TestSimulateNetworkChange:
         ]
         network = []
         candidates = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
         ]
         result = simulate_network_change.invoke({
             "add_entity_ids": ["Entity A"],
@@ -571,11 +571,11 @@ class TestSimulateNetworkChange:
             {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
         ]
         network = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
         ]
         candidates = [
-            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "Primary Contract Entity": "Entity A"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "Primary Contract Entity": "Entity B"},
+            {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "specialty": "hospital", "entity": "Entity B"},
         ]
         result = simulate_network_change.invoke({
             "add_entity_ids": ["Entity B"],
@@ -630,8 +630,8 @@ class TestServiceAreaFiltering:
 
     def test_empty_thresholds_returns_all(self):
         candidates = [
-            {"id": 1, "lat": 42.0, "lon": -83.0, "Primary Contract Entity": "A"},
-            {"id": 2, "lat": 45.0, "lon": -90.0, "Primary Contract Entity": "B"},
+            {"id": 1, "lat": 42.0, "lon": -83.0, "entity": "A"},
+            {"id": 2, "lat": 45.0, "lon": -90.0, "entity": "B"},
         ]
         members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
         result = _filter_by_service_area(candidates, members, {})
@@ -639,9 +639,9 @@ class TestServiceAreaFiltering:
 
     def test_entity_retained_when_one_provider_in_bounds(self):
         candidates = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "lat": 47.0, "lon": -85.0, "Primary Contract Entity": "Entity A"},
-            {"id": 3, "lat": 45.0, "lon": -90.0, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "entity": "Entity A"},
+            {"id": 2, "lat": 47.0, "lon": -85.0, "entity": "Entity A"},
+            {"id": 3, "lat": 45.0, "lon": -90.0, "entity": "Entity B"},
         ]
         members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
         thresholds = {"wayne": {"hospital": 10.0}}
@@ -653,8 +653,8 @@ class TestServiceAreaFiltering:
 
     def test_entity_excluded_when_no_providers_in_bounds(self):
         candidates = [
-            {"id": 1, "lat": 47.0, "lon": -85.0, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "lat": 48.0, "lon": -86.0, "Primary Contract Entity": "Entity A"},
+            {"id": 1, "lat": 47.0, "lon": -85.0, "entity": "Entity A"},
+            {"id": 2, "lat": 48.0, "lon": -86.0, "entity": "Entity A"},
         ]
         members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
         thresholds = {"wayne": {"hospital": 10.0}}
@@ -666,14 +666,16 @@ class TestServiceAreaFiltering:
         assert result == []
 
     def test_empty_members_returns_all(self):
-        candidates = [{"id": 1, "lat": 42.0, "lon": -83.0, "Primary Contract Entity": "A"}]
+        candidates = [{"id": 1, "lat": 42.0, "lon": -83.0, "entity": "A"}]
         result = _filter_by_service_area(candidates, [], {"wayne": {"hospital": 10.0}})
-        assert result == candidates
+        assert len(result) == 1
+        assert result[0]["id"] == 1
+        assert result[0]["entity"] == "A"
 
     def test_scaled_coordinates_normalized(self):
         candidates = [
-            {"id": 1, "Latitude": 42300000, "Longitude": 83500000, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "Latitude": 47000000, "Longitude": 85000000, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "Latitude": 42300000, "Longitude": 83500000, "entity": "Entity A"},
+            {"id": 2, "Latitude": 47000000, "Longitude": 85000000, "entity": "Entity B"},
         ]
         members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
         thresholds = {"wayne": {"hospital": 10.0}}
@@ -688,14 +690,14 @@ class TestPrecomputeFunctions:
 
     def test_precompute_entity_summaries_basic(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity A"},
-            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
+            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "entity": "Entity A"},
+            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "entity": "Entity B"},
         ]
         result = precompute_entity_summaries(candidates)
         assert isinstance(result, list)
         assert len(result) == 2
-        entity_map = {r["Primary Contract Entity"]: r for r in result}
+        entity_map = {r["entity"]: r for r in result}
         assert entity_map["Entity A"]["provider_count"] == 2
         assert entity_map["Entity B"]["provider_count"] == 1
 
@@ -704,8 +706,8 @@ class TestPrecomputeFunctions:
 
     def test_precompute_schema_profile_basic(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
+            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "entity": "Entity B"},
         ]
         summaries = precompute_entity_summaries(candidates)
         profile = precompute_schema_profile(summaries)
@@ -719,7 +721,7 @@ class TestPrecomputeFunctions:
 
     def test_get_candidate_schema_profile_with_summaries(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
         ]
         summaries = precompute_entity_summaries(candidates)
         profile = get_candidate_schema_profile(entity_summaries=summaries)
@@ -728,7 +730,7 @@ class TestPrecomputeFunctions:
 
     def test_get_candidate_schema_profile_fallback_candidates(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
         ]
         profile = get_candidate_schema_profile(candidates=candidates)
         assert isinstance(profile, dict)
@@ -740,8 +742,8 @@ class TestCachedAggregation:
 
     def test_get_candidates_uses_cached_summaries(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "entity": "Entity B"},
         ]
         entity_summaries = precompute_entity_summaries(candidates)
         result = get_candidates.invoke({
@@ -755,8 +757,8 @@ class TestCachedAggregation:
 
     def test_get_candidates_fallback_without_summaries(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "entity": "Entity B"},
         ]
         result = get_candidates.invoke({
             "specialties": ["hospital"],
@@ -769,9 +771,9 @@ class TestCachedAggregation:
 
     def test_full_pipeline_filter_then_aggregate(self):
         candidates = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "specialty": "hospital", "effectiveness": 5, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "lat": 42.4, "lon": -83.4, "specialty": "hospital", "effectiveness": 3, "Primary Contract Entity": "Entity A"},
-            {"id": 3, "lat": 47.0, "lon": -85.0, "specialty": "hospital", "effectiveness": 4, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "specialty": "hospital", "effectiveness": 5, "entity": "Entity A"},
+            {"id": 2, "lat": 42.4, "lon": -83.4, "specialty": "hospital", "effectiveness": 3, "entity": "Entity A"},
+            {"id": 3, "lat": 47.0, "lon": -85.0, "specialty": "hospital", "effectiveness": 4, "entity": "Entity B"},
         ]
         members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
         thresholds = {"wayne": {"hospital": 10.0}}
@@ -782,17 +784,17 @@ class TestCachedAggregation:
 
         assert len(filtered) == 2
         assert len(summaries) == 1
-        assert summaries[0]["Primary Contract Entity"] == "Entity A"
+        assert summaries[0]["entity"] == "Entity A"
         assert "avg_effectiveness" in profile
 
     def test_total_claims_amount_aggregation(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Total Claims Amount": 100.0, "Medicare Total Claims Amount": 50.0, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Total Claims Amount": 200.0, "Medicare Total Claims Amount": 80.0, "Primary Contract Entity": "Entity A"},
-            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Total Claims Amount": 500.0, "Medicare Total Claims Amount": 250.0, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "total_claims_amount": 100.0, "medicare_total_claims_amount": 50.0, "entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "total_claims_amount": 200.0, "medicare_total_claims_amount": 80.0, "entity": "Entity A"},
+            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "total_claims_amount": 500.0, "medicare_total_claims_amount": 250.0, "entity": "Entity B"},
         ]
         summaries = precompute_entity_summaries(candidates)
-        entity_map = {r["Primary Contract Entity"]: r for r in summaries}
+        entity_map = {r["entity"]: r for r in summaries}
         assert entity_map["Entity A"]["total_claims_amount"] == 300.0
         assert entity_map["Entity A"]["avg_total_claims_amount"] == 150.0
         assert entity_map["Entity A"]["total_medicare_claims_amount"] == 130.0
@@ -801,9 +803,9 @@ class TestCachedAggregation:
 
     def test_get_candidates_sort_by_total_claims(self):
         candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Total Claims Amount": 100.0, "Primary Contract Entity": "Entity A"},
-            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Total Claims Amount": 200.0, "Primary Contract Entity": "Entity A"},
-            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Total Claims Amount": 500.0, "Primary Contract Entity": "Entity B"},
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "total_claims_amount": 100.0, "entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "total_claims_amount": 200.0, "entity": "Entity A"},
+            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "total_claims_amount": 500.0, "entity": "Entity B"},
         ]
         entity_summaries = precompute_entity_summaries(candidates)
         result = get_candidates.invoke({

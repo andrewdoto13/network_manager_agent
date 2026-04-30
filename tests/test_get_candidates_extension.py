@@ -5,11 +5,11 @@ from network_manager_agent.tools import get_candidates, precompute_entity_summar
 @pytest.fixture
 def mock_candidates():
     return [
-        {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5.0, "efficiency": 4.0, "Primary Contract Entity": "Entity A", "provider_count": 10},
-        {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 2.0, "efficiency": 2.0, "Primary Contract Entity": "Entity B", "provider_count": 2},
-        {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 1.0, "efficiency": 1.0, "Primary Contract Entity": "Entity C", "provider_count": 1},
-        {"id": 4, "specialty": "clinic", "lat": 42.3, "lon": -83.3, "effectiveness": 4.0, "efficiency": 4.0, "Primary Contract Entity": "Entity D", "provider_count": 5},
-        {"id": 5, "specialty": "hospital", "lat": 42.4, "lon": -83.4, "effectiveness": 3.0, "efficiency": 3.0, "Primary Contract Entity": "Entity E", "provider_count": 20},
+        {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5.0, "efficiency": 4.0, "entity": "Entity A", "provider_count": 10},
+        {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 2.0, "efficiency": 2.0, "entity": "Entity B", "provider_count": 2},
+        {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 1.0, "efficiency": 1.0, "entity": "Entity C", "provider_count": 1},
+        {"id": 4, "specialty": "clinic", "lat": 42.3, "lon": -83.3, "effectiveness": 4.0, "efficiency": 4.0, "entity": "Entity D", "provider_count": 5},
+        {"id": 5, "specialty": "hospital", "lat": 42.4, "lon": -83.4, "effectiveness": 3.0, "efficiency": 3.0, "entity": "Entity E", "provider_count": 20},
     ]
 
 @pytest.fixture

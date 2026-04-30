@@ -10,17 +10,12 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 from typing import Annotated
 
-from .state import AgentState
-from .data import normalize_coordinates
-from .config import SERVICE_AREA_BUFFER_MILES
+from .data import normalize_coordinates, normalize_records
 
 
-def _deg2rad(df: pd.DataFrame, mapper: Any) -> np.ndarray:
+def _deg2rad(df: pd.DataFrame) -> np.ndarray:
     """Convert lat/lon from degrees to radians."""
-    lat_col = mapper.get("lat", df)
-    lon_col = mapper.get("lon", df)
-    return df[[lat_col, lon_col]].values * (np.pi / 180.0)
-
+    return df[["lat", "lon"]].values * (np.pi / 180.0)
 
 
 def _miles_to_radians(threshold_miles: float, earth_radius_miles: float = 3958.8) -> float:
@@ -33,46 +28,26 @@ def _compute_coverage(
     members: list[dict],
     county_specialty_thresholds: dict[str, dict[str, float]],
     candidates: list[dict] = None,
-    mapper: Any = None,
 ) -> tuple[list[dict], list[str]]:
-    """Compute per-county-and-specialty member coverage given a network and member set.
-    
-    If mapper is not provided, a temporary one is created from candidates.
-    """
+    """Compute per-county-and-specialty member coverage given a network and member set."""
     try:
         members_df = pd.DataFrame(members) if members else pd.DataFrame()
         net_df = pd.DataFrame(network) if network else pd.DataFrame()
         candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
-
-        if mapper is None:
-            from .schema import SchemaMapper
-            mapper = SchemaMapper()
-            mapper.add_dataframe(candidates_df if not candidates_df.empty else pd.DataFrame())
-            mapper.add_dataframe(members_df if not members_df.empty else pd.DataFrame())
     except Exception as e:
         return [], [f"Data preparation error: {str(e)}"]
     
     if members_df.empty:
         return [], []
     
-    try:
-        m_county = mapper.get("county", members_df)
-        m_lat = mapper.get("lat", members_df)
-        m_lon = mapper.get("lon", members_df)
-
-        n_lat = mapper.get("lat", net_df)
-        n_lon = mapper.get("lon", net_df)
-    except KeyError as e:
-        return [], [f"Required columns not found: {str(e)}"]
-    except Exception as e:
-        return [], [f"Unexpected error during column mapping: {str(e)}"]
-
+    if "county" not in members_df.columns:
+        return [], ["Required column 'county' not found in members data."]
 
     # Discover specialty column in candidates
     spec_col = None
     valid_specialties = set()
     if not candidates_df.empty:
-        spec_col = next((c for c in candidates_df.columns if c.lower() == "specialty"), None)
+        spec_col = "specialty" if "specialty" in candidates_df.columns else None
         if spec_col:
             valid_specialties = set(candidates_df[spec_col].dropna().unique().tolist())
 
@@ -87,11 +62,11 @@ def _compute_coverage(
 
     coverage_results = []
     for county_val, specialties in county_specialty_thresholds.items():
-        county_members = members_df[members_df[m_county] == county_val]
+        county_members = members_df[members_df["county"] == county_val]
         if county_members.empty:
             continue
         
-        group_pts = _deg2rad(county_members, mapper)
+        group_pts = _deg2rad(county_members)
 
         for specialty, threshold in specialties.items():
             # Filter network providers by specialty
@@ -112,7 +87,7 @@ def _compute_coverage(
                 continue
 
             radius_rad = _miles_to_radians(threshold)
-            tree = BallTree(_deg2rad(specialty_network, mapper), leaf_size=40, metric="haversine")
+            tree = BallTree(_deg2rad(specialty_network), leaf_size=40, metric="haversine")
             indices, _ = tree.query_radius(group_pts, r=radius_rad, return_distance=True)
 
             members_with_access = int(np.array([len(lst) > 0 for lst in indices]).sum())
@@ -136,21 +111,13 @@ def _filter_by_service_area(
     candidates: list[dict],
     members: list[dict],
     county_specialty_thresholds: dict[str, dict[str, float]],
-    mapper: Any = None,
 ) -> list[dict]:
-    """Filter candidates to entities within the service area.
-    
-    If mapper is not provided, a temporary one is created from candidates.
-    """
+    """Filter candidates to entities within the service area."""
+    candidates = normalize_records(candidates) if candidates else []
+    members = normalize_records(members) if members else []
     if not candidates or not members:
         return candidates
  
-    if not mapper:
-        from .schema import SchemaMapper
-        mapper = SchemaMapper()
-        mapper.add_dataframe(pd.DataFrame(candidates))
-        mapper.add_dataframe(pd.DataFrame(members))
-
 
     if not county_specialty_thresholds:
         return candidates
@@ -160,39 +127,31 @@ def _filter_by_service_area(
         for specs in county_specialty_thresholds.values()
         for thresh in specs.values()
     )
-    buffer_miles = max_threshold + SERVICE_AREA_BUFFER_MILES
-    buffer_deg = buffer_miles / 69.0
+    buffer_deg = (max_threshold + 20) / 69.0
 
     members_df = pd.DataFrame(members)
-    m_lat_col = mapper.get("lat", members_df)
-    m_lon_col = mapper.get("lon", members_df)
  
-    lat_min = members_df[m_lat_col].min() - buffer_deg
-    lat_max = members_df[m_lat_col].max() + buffer_deg
-    lon_min = members_df[m_lon_col].min() - buffer_deg
-    lon_max = members_df[m_lon_col].max() + buffer_deg
+    lat_min = members_df["lat"].min() - buffer_deg
+    lat_max = members_df["lat"].max() + buffer_deg
+    lon_min = members_df["lon"].min() - buffer_deg
+    lon_max = members_df["lon"].max() + buffer_deg
  
     cdf = pd.DataFrame(candidates)
     normalize_coordinates(cdf)
  
-    c_lat_col = mapper.get("lat", cdf)
-    c_lon_col = mapper.get("lon", cdf)
-    entity_col = mapper.get("entity", cdf)
-
-
 
     in_bounds_mask = (
-        (cdf[c_lat_col] >= lat_min)
-        & (cdf[c_lat_col] <= lat_max)
-        & (cdf[c_lon_col] >= lon_min)
-        & (cdf[c_lon_col] <= lon_max)
+        (cdf["lat"] >= lat_min)
+        & (cdf["lat"] <= lat_max)
+        & (cdf["lon"] >= lon_min)
+        & (cdf["lon"] <= lon_max)
     )
 
     qualifying_entities = set(
-        cdf.loc[in_bounds_mask, entity_col].dropna().unique().tolist()
+        cdf.loc[in_bounds_mask, "entity"].dropna().unique().tolist()
     )
 
-    entity_mask = cdf[entity_col].isin(qualifying_entities)
+    entity_mask = cdf["entity"].isin(qualifying_entities)
     result_df = cdf.loc[entity_mask].reset_index(drop=True)
 
     return result_df.to_dict(orient="records")
@@ -206,6 +165,7 @@ def precompute_entity_summaries(candidates: list[dict]) -> list[dict]:
     """
     if not candidates:
         return []
+    candidates = normalize_records(candidates)
     agg_df = _aggregate_entities(candidates)
     if agg_df.empty:
         return []
@@ -229,7 +189,7 @@ def _build_schema_profile_from_summaries(entity_df: pd.DataFrame) -> dict:
     profile = {}
     
     # Exclude the entity identifier column from the profile
-    id_cols = {"Primary Contract Entity", "entity_id"}
+    id_cols = {"entity", "entity_id"}
     cols_to_profile = [col for col in entity_df.columns if col not in id_cols]
     
     for col in cols_to_profile:
@@ -297,7 +257,7 @@ def _build_schema_profile_from_summaries(entity_df: pd.DataFrame) -> dict:
 def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
     """Aggregate provider-level data into entity-level summaries.
     
-    Returns a DataFrame indexed by 'Primary Contract Entity' with aggregated metrics
+    Returns a DataFrame indexed by 'entity' with aggregated metrics
     including effectiveness, efficiency, specialties, provider count, claims volume,
     and location confidence distribution.
     """
@@ -306,52 +266,51 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
     
     df = pd.DataFrame(candidates)
     
-    # Case-insensitive column discovery
-    entity_col = next((c for c in df.columns if c.lower() == "primary contract entity"), "Primary Contract Entity")
-    eff_col = next((c for c in df.columns if c.lower() == "effectiveness"), "Effectiveness")
-    eta_col = next((c for c in df.columns if c.lower() == "efficiency"), "Efficiency")
-    spec_col = next((c for c in df.columns if c.lower() == "specialty"), "Specialty")
-    claims_col = next((c for c in df.columns if c.lower() == "total claims amount"), "Total Claims Amount")
-    medicare_claims_col = next((c for c in df.columns if c.lower() == "medicare total claims amount"), "Medicare Total Claims Amount")
-    confidence_col = next((c for c in df.columns if c.lower() == "location confidence score"), "Location Confidence Score")
-    new_pat_col = next((c for c in df.columns if c.lower() == "medicare new patient claims"), "Medicare New Patient Claims")
-    claims_vol_col = next((c for c in df.columns if c.lower() == "total claims volume"), "Total Claims Volume")
-    city_col = next((c for c in df.columns if c.lower() == "city"), "City")
+    # Use canonical column names (already normalized at load time)
+    entity_col = "entity" if "entity" in df.columns else None
+    eff_col = "effectiveness" if "effectiveness" in df.columns else None
+    eta_col = "efficiency" if "efficiency" in df.columns else None
+    spec_col = "specialty" if "specialty" in df.columns else None
+    claims_col = "total_claims_amount" if "total_claims_amount" in df.columns else None
+    medicare_claims_col = "medicare_total_claims_amount" if "medicare_total_claims_amount" in df.columns else None
+    confidence_col = "location_confidence" if "location_confidence" in df.columns else None
+    new_pat_col = "new_patient_claims" if "new_patient_claims" in df.columns else None
+    claims_vol_col = "claims_volume" if "claims_volume" in df.columns else None
+    city_col = "city" if "city" in df.columns else None
 
-    if entity_col not in df.columns:
-        # If no entity column, treat each provider as its own entity
-        df["Primary Contract Entity"] = df.index
-        entity_col = "Primary Contract Entity"
+    if entity_col is None:
+        df["entity"] = df.index
+        entity_col = "entity"
 
     agg_map = {}
-    if eff_col in df.columns:
+    if eff_col:
         agg_map[eff_col] = "mean"
-    if eta_col in df.columns:
+    if eta_col:
         agg_map[eta_col] = "mean"
-    if spec_col in df.columns:
+    if spec_col:
         agg_map[spec_col] = lambda x: list(set(x.dropna()))
     
-    if new_pat_col in df.columns:
+    if new_pat_col:
         agg_map[new_pat_col] = lambda x: float(round((x == 'Yes').mean() * 100, 2)) if not x.empty else None
-    if claims_vol_col in df.columns:
+    if claims_vol_col:
         def vol_dist(x):
             dist = x.dropna().value_counts().to_dict()
             return {k: int(v) for k, v in dist.items()}
         agg_map[claims_vol_col] = vol_dist
-    if city_col in df.columns:
+    if city_col:
         agg_map[city_col] = "nunique"
 
     # Always count providers per entity
     agg_map[entity_col] = "count"
 
     # Numeric aggregation for claims volume
-    if claims_col in df.columns:
+    if claims_col:
         agg_map[claims_col] = lambda x: float(round(x.dropna().mean(), 2)) if x.dropna().any() else None
-    if medicare_claims_col in df.columns:
+    if medicare_claims_col:
         agg_map[medicare_claims_col] = lambda x: float(round(x.dropna().mean(), 2)) if x.dropna().any() else None
 
     # Categorical distributions for location confidence
-    if confidence_col in df.columns:
+    if confidence_col:
         def confidence_dist(x):
             dist = x.dropna().value_counts().to_dict()
             return {k: int(v) for k, v in dist.items()}
@@ -360,41 +319,33 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
     agg_df = df.groupby(entity_col).agg(agg_map)
 
     # Compute total (sum) claims per entity separately and merge
-    if claims_col in df.columns:
+    if claims_col:
         totals = df.groupby(entity_col)[claims_col].apply(
             lambda x: float(round(x.dropna().sum(), 2)) if x.dropna().any() else None
         )
-        totals.name = "total_claims_amount"
+        totals.name = "_sum_total_claims_amount"
         agg_df = agg_df.join(totals)
-    if medicare_claims_col in df.columns:
+    if medicare_claims_col:
         totals = df.groupby(entity_col)[medicare_claims_col].apply(
             lambda x: float(round(x.dropna().sum(), 2)) if x.dropna().any() else None
         )
-        totals.name = "total_medicare_claims_amount"
+        totals.name = "_sum_medicare_total_claims_amount"
         agg_df = agg_df.join(totals)
 
-    # Rename for consistency
-    rename_map = {entity_col: "provider_count"}
-    if eff_col in df.columns:
-        rename_map[eff_col] = "avg_effectiveness"
-    if eta_col in df.columns:
-        rename_map[eta_col] = "avg_efficiency"
-    if spec_col in df.columns:
-        rename_map[spec_col] = "specialties"
-    if claims_col in df.columns:
-        rename_map[claims_col] = "avg_total_claims_amount"
-    if medicare_claims_col in df.columns:
-        rename_map[medicare_claims_col] = "avg_medicare_total_claims_amount"
-    if confidence_col in df.columns:
-        rename_map[confidence_col] = "location_confidence_dist"
-    if new_pat_col in df.columns:
-        rename_map[new_pat_col] = "new_patient_rate"
-    if claims_vol_col in df.columns:
-        rename_map[claims_vol_col] = "claims_volume_dist"
-    if city_col in df.columns:
-        rename_map[city_col] = "geographic_reach"
-
-    return agg_df.rename(columns=rename_map)
+    return agg_df.rename(columns={
+        entity_col: "provider_count",
+        eff_col: "avg_effectiveness" if eff_col else None,
+        eta_col: "avg_efficiency" if eta_col else None,
+        spec_col: "specialties" if spec_col else None,
+        claims_col: "avg_total_claims_amount" if claims_col else None,
+        medicare_claims_col: "avg_medicare_total_claims_amount" if medicare_claims_col else None,
+        confidence_col: "location_confidence_dist" if confidence_col else None,
+        new_pat_col: "new_patient_rate" if new_pat_col else None,
+        claims_vol_col: "claims_volume_dist" if claims_vol_col else None,
+        city_col: "geographic_reach" if city_col else None,
+        "_sum_total_claims_amount": "total_claims_amount",
+        "_sum_medicare_total_claims_amount": "total_medicare_claims_amount",
+    })
 
 
 @tool
@@ -420,6 +371,8 @@ def get_candidates(
     - limit: The maximum number of entities to return.
     Returns a message if no entities remain for the requested specialties.
     """
+    candidates = normalize_records(candidates) if candidates else []
+    network = normalize_records(network) if network else []
     candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
     network_df = pd.DataFrame(network) if network else pd.DataFrame()
 
@@ -431,12 +384,11 @@ def get_candidates(
 
     target_specialties = specialties
 
-    id_col = next((c for c in candidates_df.columns if c.lower() == "id"), "id")
-    spec_col = next((c for c in candidates_df.columns if c.lower() == "specialty"), "specialty")
-    entity_col = next(
-        (c for c in candidates_df.columns if c.lower() == "primary contract entity"),
-        "Primary Contract Entity",
-    )
+    spec_col = "specialty" if "specialty" in candidates_df.columns else None
+    entity_col = "entity" if "entity" in candidates_df.columns else None
+
+    if spec_col is None:
+        return "No specialty column found in candidate data."
 
     # 1. Find entities that have the specialty
     eligible_providers = candidates_df[candidates_df[spec_col].isin(target_specialties)]
@@ -456,9 +408,7 @@ def get_candidates(
     # 3. Use pre-computed entity summaries (fall back to computing if not provided)
     if entity_summaries:
         summaries_df = pd.DataFrame(entity_summaries)
-        entity_key = "Primary Contract Entity"
-        if entity_key not in summaries_df.columns:
-            entity_key = summaries_df.columns[0]
+        entity_key = "entity" if "entity" in summaries_df.columns else summaries_df.columns[0]
     else:
         summaries_df = _aggregate_entities(candidates)
         entity_key = None
@@ -554,14 +504,15 @@ def add_contract_entity(
     Returns a list of all providers added to the network. Entities already in the network
     are silently skipped. Invalid entity names are reported in the 'errors' field.
     """
+    network = normalize_records(network) if network else []
+    candidates = normalize_records(candidates) if candidates else []
     network_df = pd.DataFrame(network) if network else pd.DataFrame()
     candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
 
     if candidates_df.empty:
         return "No candidate data available."
 
-    # Case-insensitive column discovery
-    entity_col = next((c for c in candidates_df.columns if c.lower() == "primary contract entity"), "Primary Contract Entity")
+    entity_col = "entity" if "entity" in candidates_df.columns else None
     
     used_entities = set(network_df[entity_col].values) if not network_df.empty and entity_col in network_df.columns else set()
     added_providers: list[dict] = []
@@ -589,7 +540,6 @@ def get_network_status(
     network: Annotated[list[dict], InjectedState("network")],
     county_specialty_thresholds: Annotated[dict[str, dict[str, float]], InjectedState("county_specialty_thresholds")],
     candidates: Annotated[list[dict], InjectedState("candidates")],
-    mapper: Annotated[Any, InjectedState("schema_mapper")] = None,
 ) -> dict[str, Any]:
     """Return the current network status including total providers and member coverage.
 
@@ -607,7 +557,10 @@ def get_network_status(
         "validation_errors": [str, ...]  # specialties not found in candidate data
       }
     """
-    coverage, validation_errors = _compute_coverage(network, members, county_specialty_thresholds, candidates, mapper)
+    members = normalize_records(members) if members else []
+    network = normalize_records(network) if network else []
+    candidates = normalize_records(candidates) if candidates else []
+    coverage, validation_errors = _compute_coverage(network, members, county_specialty_thresholds, candidates)
     return {
         "total_providers": len(network),
         "member_coverage": coverage,
@@ -625,7 +578,7 @@ def _build_sim_network(
     sim_network = [p for _, p in network_df.iterrows()] if not network_df.empty else []
     sim_network = [p.to_dict() if hasattr(p, "to_dict") else p for p in sim_network]
 
-    entity_col = next((c for c in candidates_df.columns if c.lower() == "primary contract entity"), "Primary Contract Entity")
+    entity_col = "entity" if "entity" in candidates_df.columns else None
 
     for eid in remove_entity_ids:
         sim_network = [p for p in sim_network if p.get(entity_col) != eid]
@@ -671,7 +624,7 @@ def _validate_scenario(
     if len(remove_entity_ids) > 5:
         errors.append("remove_entity_ids: maximum 5 entities allowed per scenario.")
 
-    entity_col = next((c for c in candidates_df.columns if c.lower() == "primary contract entity"), "Primary Contract Entity")
+    entity_col = "entity" if "entity" in candidates_df.columns else None
     used_entities = set(network_df[entity_col].values) if not network_df.empty and entity_col in network_df.columns else set()
 
     for eid in add_entity_ids:
@@ -694,7 +647,6 @@ def simulate_network_change(
     network: Annotated[list[dict], InjectedState("network")],
     members: Annotated[list[dict], InjectedState("members")],
     county_specialty_thresholds: Annotated[dict[str, dict[str, float]], InjectedState("county_specialty_thresholds")],
-    mapper: Annotated[Any, InjectedState("schema_mapper")] = None,
     add_entity_ids: list[str] = [],
     remove_entity_ids: list[str] = [],
     compare_scenarios: list[dict] = [],
@@ -716,10 +668,13 @@ def simulate_network_change(
 
     Returns current coverage, simulated coverage, and per-county-specialty delta (percentage point change).
     """
+    candidates = normalize_records(candidates) if candidates else []
+    network = normalize_records(network) if network else []
+    members = normalize_records(members) if members else []
     candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
     network_df = pd.DataFrame(network) if network else pd.DataFrame()
 
-    current_coverage, current_errors = _compute_coverage(network, members, county_specialty_thresholds, candidates, mapper)
+    current_coverage, current_errors = _compute_coverage(network, members, county_specialty_thresholds, candidates)
 
     if compare_scenarios:
         if len(compare_scenarios) > 5:
@@ -740,7 +695,7 @@ def simulate_network_change(
                 continue
 
             sim_net = _build_sim_network(network_df, candidates_df, sc_add, sc_remove)
-            sim_cov, sim_errors = _compute_coverage(sim_net, members, county_specialty_thresholds, candidates, mapper)
+            sim_cov, sim_errors = _compute_coverage(sim_net, members, county_specialty_thresholds, candidates)
             sc_delta = _compute_delta(current_coverage, sim_cov)
 
             scenario_results.append({
@@ -779,7 +734,7 @@ def simulate_network_change(
         return {"error": "Invalid entities", "details": errors}
 
     sim_net = _build_sim_network(network_df, candidates_df, add_entity_ids, remove_entity_ids)
-    sim_cov, sim_errors = _compute_coverage(sim_net, members, county_specialty_thresholds, candidates, mapper)
+    sim_cov, sim_errors = _compute_coverage(sim_net, members, county_specialty_thresholds, candidates)
     delta = _compute_delta(current_coverage, sim_cov)
 
     all_validation_errors = list(set(current_errors + sim_errors))

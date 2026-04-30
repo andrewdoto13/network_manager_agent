@@ -78,7 +78,7 @@ class TestNetworkManager:
         state = _make_state(
             messages=[HumanMessage(content="test prompt")],
             schema_profile="",
-            candidates=[{"id": 1, "specialty": "hospital", "effectiveness": 5, "Primary Contract Entity": "A"}],
+            candidates=[{"id": 1, "specialty": "hospital", "effectiveness": 5, "entity": "A"}],
         )
         llm = _make_llm()
         network_manager(state, llm)
@@ -150,7 +150,7 @@ class TestUpdateState:
 
     def test_extracts_providers_from_tool_message(self):
         ai_msg = AIMessage(content="", tool_calls=[{"name": "add_contract_entity", "args": {"entity_ids": ["A"]}, "id": "1"}])
-        tool_msg = ToolMessage(content='{"added_providers": [{"id": 1, "Name": "Entity A", "Latitude": 42.0, "Longitude": -83.0, "Specialty": "hospital", "Primary Contract Entity": "Entity A"}]}', tool_call_id="1", name="add_contract_entity")
+        tool_msg = ToolMessage(content='{"added_providers": [{"id": 1, "Name": "Entity A", "Latitude": 42.0, "Longitude": -83.0, "Specialty": "hospital", "entity": "Entity A"}]}', tool_call_id="1", name="add_contract_entity")
         state = _make_state(messages=[ai_msg, tool_msg])
 
         result = update_state(state)
@@ -161,7 +161,7 @@ class TestUpdateState:
         assert result["network"][0]["Latitude"] == 42.0
         assert result["network"][0]["Longitude"] == -83.0
         assert result["network"][0]["Specialty"] == "hospital"
-        assert result["network"][0]["Primary Contract Entity"] == "Entity A"
+        assert result["network"][0]["entity"] == "Entity A"
 
     def test_skips_skip_response(self):
         ai_msg = AIMessage(content="", tool_calls=[{"name": "add_contract_entity", "args": {"entity_ids": ["A"]}, "id": "1"}])
