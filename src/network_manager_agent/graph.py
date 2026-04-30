@@ -12,6 +12,7 @@ from .nodes import (
     update_state,
     summarize_messages,
     should_summarize,
+    execute_tools,
 )
 
 
@@ -20,9 +21,6 @@ def build_agent(llm: ChatOpenAI):
 
     Args:
         llm: Configured ChatOpenAI instance.
-        candidates: List of available provider candidates.
-        members: List of member locations.
-        county_specialty_thresholds: Optional nested dictionary mapping counties to specialty->threshold dicts.
 
     Returns:
         Compiled LangGraph agent ready for execution.
@@ -31,7 +29,7 @@ def build_agent(llm: ChatOpenAI):
 
     # Define nodes: these do the work
     builder.add_node("network_manager", lambda state: network_manager(state, llm))
-    builder.add_node("tools", ToolNode(TOOLS))
+    builder.add_node("tools", execute_tools)
     builder.add_node("update_state", update_state)
     builder.add_node("summarize_messages", lambda state: summarize_messages(state, llm))
 
