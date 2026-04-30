@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import pandas as pd
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
@@ -16,7 +17,26 @@ from .tools import (
 )
 from .graph import build_agent
 from .ui import run_agent
+from .schema import SchemaMapper
 
+
+def run_agent_session(agent, prompt, candidates, members, thresholds, summaries, profile, thread_config):
+    """Helper to encapsulate agent execution and summary printing."""
+    messages = [HumanMessage(content=prompt)]
+    inputs = {
+        "messages": messages,
+        "candidates": candidates,
+        "members": members,
+        "county_specialty_thresholds": thresholds,
+        "entity_summaries": summaries,
+        "schema_profile": profile,
+    }
+    run_agent(agent, inputs, thread_config)
+    
+    state = agent.get_state(thread_config)
+    summary = state.values.get("summary", "")
+    if summary:
+        print(f"\n--- Summary ---\n{summary}")
 
 def main():
     """Main CLI entry point."""
@@ -84,11 +104,16 @@ def main():
     )
 
     # Pre-compute: filter by service area, aggregate entities, build schema
+    # Initialize SchemaMapper first to use it in filter
+    schema_mapper = SchemaMapper(pd.DataFrame(candidates))
+    
     filtered_candidates = _filter_by_service_area(
-        candidates, members, county_specialty_thresholds
+        candidates, members, county_specialty_thresholds, schema_mapper
     )
+    
     entity_summaries = precompute_entity_summaries(filtered_candidates)
     schema_profile = precompute_schema_profile(entity_summaries)
+
 
     print(
         f"Loaded {len(candidates)} raw candidates "
@@ -109,42 +134,23 @@ def main():
         print("Enter your prompt (or 'quit' to exit):")
         prompt = input("> ").strip()
         while prompt.lower() not in ("quit", "exit", "q"):
-            if prompt:
-                messages = [HumanMessage(content=prompt)]
-                inputs = {
-                    "messages": messages,
-                    "candidates": filtered_candidates,
-                    "members": members,
-                    "county_specialty_thresholds": county_specialty_thresholds,
-                    "entity_summaries": entity_summaries,
-                    "schema_profile": schema_profile,
-                }
-                run_agent(agent, inputs, thread_config)
-
-                # Show summary
-                state = agent.get_state(thread_config)
-                summary = state.values.get("summary", "")
-                if summary:
-                    print(f"\n--- Summary ---\n{summary}")
-
-            prompt = input("\n> ").strip()
+                if prompt:
+                    run_agent_session(
+                        agent, prompt, filtered_candidates, members, 
+                        county_specialty_thresholds, entity_summaries, 
+                        schema_profile, thread_config
+                    )
+ 
+ 
+                    prompt = input("\n> ").strip()
 
     if args.prompt:
-        messages = [HumanMessage(content=prompt)]
-        inputs = {
-            "messages": messages,
-            "candidates": filtered_candidates,
-            "members": members,
-            "county_specialty_thresholds": county_specialty_thresholds,
-            "entity_summaries": entity_summaries,
-            "schema_profile": schema_profile,
-        }
-        run_agent(agent, inputs, thread_config)
+        run_agent_session(
+            agent, args.prompt, filtered_candidates, members, 
+            county_specialty_thresholds, entity_summaries, 
+            schema_profile, thread_config
+        )
 
-        state = agent.get_state(thread_config)
-        summary = state.values.get("summary", "")
-        if summary:
-            print(f"\n--- Summary ---\n{summary}")
 
     print("Goodbye!")
 
