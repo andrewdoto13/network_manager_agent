@@ -12,25 +12,15 @@ from typing import Annotated
 
 from .state import AgentState
 from .data import normalize_coordinates
+from .config import SERVICE_AREA_BUFFER_MILES
 
 
-def _find_column(df: pd.DataFrame, target: str, synonyms: list[str] = None) -> str:
-    """Find a column in a DataFrame case-insensitively, optionally using synonyms."""
-    search_terms = [target.lower()]
-    if synonyms:
-        search_terms.extend([s.lower() for s in synonyms])
-    
-    for col in df.columns:
-        if col.lower() in search_terms:
-            return col
-    raise KeyError(f"Could not find column matching {target} or synonyms {synonyms} in DataFrame")
-
-
-def _deg2rad(df: pd.DataFrame) -> np.ndarray:
+def _deg2rad(df: pd.DataFrame, mapper: Any) -> np.ndarray:
     """Convert lat/lon from degrees to radians."""
-    lat_col = _find_column(df, "lat", ["latitude"])
-    lon_col = _find_column(df, "lon", ["longitude"])
+    lat_col = mapper.get("lat", df)
+    lon_col = mapper.get("lon", df)
     return df[[lat_col, lon_col]].values * (np.pi / 180.0)
+
 
 
 def _miles_to_radians(threshold_miles: float, earth_radius_miles: float = 3958.8) -> float:
@@ -43,34 +33,40 @@ def _compute_coverage(
     members: list[dict],
     county_specialty_thresholds: dict[str, dict[str, float]],
     candidates: list[dict] = None,
+    mapper: Any = None,
 ) -> tuple[list[dict], list[str]]:
     """Compute per-county-and-specialty member coverage given a network and member set.
-
-    The scope of analysis is defined by the keys in county_specialty_thresholds.
-    For each (county, specialty) pair, computes what fraction of members in that
-    county can reach a provider of that specialty within the threshold distance.
-
-    Returns a tuple of (coverage_results, validation_errors), where:
-    - coverage_results: list of dicts sorted by (county, specialty), each with keys:
-        county, specialty, members_with_access, total_members, coverage_percentage
-    - validation_errors: list of strings for specialties not found in candidate data
+    
+    If mapper is not provided, a temporary one is created from candidates.
     """
-    members_df = pd.DataFrame(members) if members else pd.DataFrame()
-    net_df = pd.DataFrame(network) if network else pd.DataFrame()
-    candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
-
-    if net_df.empty or members_df.empty:
-        return [], []
-
     try:
-        m_county = _find_column(members_df, "county")
-        m_lat = _find_column(members_df, "lat", ["latitude"])
-        m_lon = _find_column(members_df, "lon", ["longitude"])
+        members_df = pd.DataFrame(members) if members else pd.DataFrame()
+        net_df = pd.DataFrame(network) if network else pd.DataFrame()
+        candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
 
-        n_lat = _find_column(net_df, "lat", ["latitude"])
-        n_lon = _find_column(net_df, "lon", ["longitude"])
+        if mapper is None:
+            from .schema import SchemaMapper
+            mapper = SchemaMapper()
+            mapper.add_dataframe(candidates_df if not candidates_df.empty else pd.DataFrame())
+            mapper.add_dataframe(members_df if not members_df.empty else pd.DataFrame())
+    except Exception as e:
+        return [], [f"Data preparation error: {str(e)}"]
+    
+    if members_df.empty:
+        return [], []
+    
+    try:
+        m_county = mapper.get("county", members_df)
+        m_lat = mapper.get("lat", members_df)
+        m_lon = mapper.get("lon", members_df)
+
+        n_lat = mapper.get("lat", net_df)
+        n_lon = mapper.get("lon", net_df)
     except KeyError as e:
-        raise KeyError(f"Required columns not found: {e}")
+        return [], [f"Required columns not found: {str(e)}"]
+    except Exception as e:
+        return [], [f"Unexpected error during column mapping: {str(e)}"]
+
 
     # Discover specialty column in candidates
     spec_col = None
@@ -94,9 +90,12 @@ def _compute_coverage(
         county_members = members_df[members_df[m_county] == county_val]
         if county_members.empty:
             continue
+        
+        group_pts = _deg2rad(county_members, mapper)
 
         for specialty, threshold in specialties.items():
             # Filter network providers by specialty
+
             if spec_col:
                 specialty_network = net_df[net_df[spec_col] == specialty]
             else:
@@ -113,8 +112,7 @@ def _compute_coverage(
                 continue
 
             radius_rad = _miles_to_radians(threshold)
-            tree = BallTree(_deg2rad(specialty_network), leaf_size=40, metric="haversine")
-            group_pts = _deg2rad(county_members)
+            tree = BallTree(_deg2rad(specialty_network, mapper), leaf_size=40, metric="haversine")
             indices, _ = tree.query_radius(group_pts, r=radius_rad, return_distance=True)
 
             members_with_access = int(np.array([len(lst) > 0 for lst in indices]).sum())
@@ -138,26 +136,21 @@ def _filter_by_service_area(
     candidates: list[dict],
     members: list[dict],
     county_specialty_thresholds: dict[str, dict[str, float]],
+    mapper: Any = None,
 ) -> list[dict]:
     """Filter candidates to entities within the service area.
-
-    Derives a bounding box from member locations expanded by the maximum
-    threshold distance plus a 20-mile padding buffer. If an entity has at
-    least one provider inside the bounds, ALL providers of that entity are
-    retained (entities cannot be split).
-
-    If county_specialty_thresholds is empty, returns candidates unchanged.
-
-    Args:
-        candidates: List of provider candidate dicts.
-        members: List of member location dicts.
-        county_specialty_thresholds: County → specialty → threshold (miles) map.
-
-    Returns:
-        Filtered list of candidate dicts (full entity records).
+    
+    If mapper is not provided, a temporary one is created from candidates.
     """
     if not candidates or not members:
         return candidates
+ 
+    if not mapper:
+        from .schema import SchemaMapper
+        mapper = SchemaMapper()
+        mapper.add_dataframe(pd.DataFrame(candidates))
+        mapper.add_dataframe(pd.DataFrame(members))
+
 
     if not county_specialty_thresholds:
         return candidates
@@ -167,27 +160,26 @@ def _filter_by_service_area(
         for specs in county_specialty_thresholds.values()
         for thresh in specs.values()
     )
-    buffer_miles = max_threshold + 20
+    buffer_miles = max_threshold + SERVICE_AREA_BUFFER_MILES
     buffer_deg = buffer_miles / 69.0
 
     members_df = pd.DataFrame(members)
-    m_lat_col = next((c for c in members_df.columns if c.lower() in ["lat", "latitude"]), "lat")
-    m_lon_col = next((c for c in members_df.columns if c.lower() in ["lon", "longitude"]), "lon")
-
+    m_lat_col = mapper.get("lat", members_df)
+    m_lon_col = mapper.get("lon", members_df)
+ 
     lat_min = members_df[m_lat_col].min() - buffer_deg
     lat_max = members_df[m_lat_col].max() + buffer_deg
     lon_min = members_df[m_lon_col].min() - buffer_deg
     lon_max = members_df[m_lon_col].max() + buffer_deg
-
+ 
     cdf = pd.DataFrame(candidates)
     normalize_coordinates(cdf)
+ 
+    c_lat_col = mapper.get("lat", cdf)
+    c_lon_col = mapper.get("lon", cdf)
+    entity_col = mapper.get("entity", cdf)
 
-    c_lat_col = next((c for c in cdf.columns if c.lower() in ["lat", "latitude"]), "Latitude")
-    c_lon_col = next((c for c in cdf.columns if c.lower() in ["lon", "longitude"]), "Longitude")
-    entity_col = next(
-        (c for c in cdf.columns if c.lower() == "primary contract entity"),
-        "Primary Contract Entity",
-    )
+
 
     in_bounds_mask = (
         (cdf[c_lat_col] >= lat_min)
@@ -235,7 +227,12 @@ def precompute_schema_profile(entity_summaries: list[dict]) -> str:
 def _build_schema_profile_from_summaries(entity_df: pd.DataFrame) -> dict:
     """Build a statistical profile from a pre-aggregated entity DataFrame."""
     profile = {}
-    for col in entity_df.columns:
+    
+    # Exclude the entity identifier column from the profile
+    id_cols = {"Primary Contract Entity", "entity_id"}
+    cols_to_profile = [col for col in entity_df.columns if col not in id_cols]
+    
+    for col in cols_to_profile:
         dtype = str(entity_df[col].dtype)
         col_profile = {"type": dtype}
 
@@ -592,6 +589,7 @@ def get_network_status(
     network: Annotated[list[dict], InjectedState("network")],
     county_specialty_thresholds: Annotated[dict[str, dict[str, float]], InjectedState("county_specialty_thresholds")],
     candidates: Annotated[list[dict], InjectedState("candidates")],
+    mapper: Annotated[Any, InjectedState("schema_mapper")] = None,
 ) -> dict[str, Any]:
     """Return the current network status including total providers and member coverage.
 
@@ -609,7 +607,7 @@ def get_network_status(
         "validation_errors": [str, ...]  # specialties not found in candidate data
       }
     """
-    coverage, validation_errors = _compute_coverage(network, members, county_specialty_thresholds, candidates)
+    coverage, validation_errors = _compute_coverage(network, members, county_specialty_thresholds, candidates, mapper)
     return {
         "total_providers": len(network),
         "member_coverage": coverage,
@@ -696,6 +694,7 @@ def simulate_network_change(
     network: Annotated[list[dict], InjectedState("network")],
     members: Annotated[list[dict], InjectedState("members")],
     county_specialty_thresholds: Annotated[dict[str, dict[str, float]], InjectedState("county_specialty_thresholds")],
+    mapper: Annotated[Any, InjectedState("schema_mapper")] = None,
     add_entity_ids: list[str] = [],
     remove_entity_ids: list[str] = [],
     compare_scenarios: list[dict] = [],
@@ -720,7 +719,7 @@ def simulate_network_change(
     candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
     network_df = pd.DataFrame(network) if network else pd.DataFrame()
 
-    current_coverage, current_errors = _compute_coverage(network, members, county_specialty_thresholds, candidates)
+    current_coverage, current_errors = _compute_coverage(network, members, county_specialty_thresholds, candidates, mapper)
 
     if compare_scenarios:
         if len(compare_scenarios) > 5:
@@ -741,7 +740,7 @@ def simulate_network_change(
                 continue
 
             sim_net = _build_sim_network(network_df, candidates_df, sc_add, sc_remove)
-            sim_cov, sim_errors = _compute_coverage(sim_net, members, county_specialty_thresholds, candidates)
+            sim_cov, sim_errors = _compute_coverage(sim_net, members, county_specialty_thresholds, candidates, mapper)
             sc_delta = _compute_delta(current_coverage, sim_cov)
 
             scenario_results.append({
@@ -780,7 +779,7 @@ def simulate_network_change(
         return {"error": "Invalid entities", "details": errors}
 
     sim_net = _build_sim_network(network_df, candidates_df, add_entity_ids, remove_entity_ids)
-    sim_cov, sim_errors = _compute_coverage(sim_net, members, county_specialty_thresholds, candidates)
+    sim_cov, sim_errors = _compute_coverage(sim_net, members, county_specialty_thresholds, candidates, mapper)
     delta = _compute_delta(current_coverage, sim_cov)
 
     all_validation_errors = list(set(current_errors + sim_errors))

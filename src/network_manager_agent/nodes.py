@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+from langgraph.prebuilt import ToolNode
 from langchain_core.messages import (
     SystemMessage,
     HumanMessage,
@@ -20,6 +21,7 @@ from .tools import (
     add_contract_entity,
     get_network_status,
     simulate_network_change,
+    TOOLS,
 )
 
 
@@ -161,37 +163,37 @@ def summarize_messages(state: AgentState, llm: ChatOpenAI):
     """Summarize old messages to manage context window size."""
     messages = state["messages"]
     existing_summary = state.get("summary", "")
-
+ 
     last_message_to_summarize = MESSAGES_TO_ARCHIVE - 1
-
+ 
     if (last_message_to_summarize + 1 < len(messages) and
         isinstance(messages[last_message_to_summarize], AIMessage) and
         isinstance(messages[last_message_to_summarize + 1], ToolMessage)):
         last_message_to_summarize += 1
-
+ 
     to_summarize = messages[:last_message_to_summarize + 1]
-
+ 
     instruction = f"""You are a task summarizer. Update the existing summary based on the new history provided below.
-
+ 
     EXISTING SUMMARY:
     {existing_summary if existing_summary else "No previous summary."}
-
+ 
     STRUCTURE:
     Objective: [Recap of the user requests]
     Progress: [High-level status of progress, summarizing the tools that you called]
-
+ 
     RULES:
     1. Use ONLY English.
     2. Incorporate new info into the existing summary; do not just append.
     3. Be specific with the objective because details matter here.
     4. Always preserve the user's original constraints and preferences verbatim in the Objective section, no matter what actually happened during execution.
     """
-
+ 
     history_text = "\n".join([f"{m.type}: {_get_content(m)}" for m in to_summarize])
     final_prompt = f"{instruction}\n\nHISTORY TO SUMMARIZE:\n{history_text}\n\nSummary:"
-
+ 
     response = llm.invoke([HumanMessage(content=final_prompt)])
-
+ 
     updated_summary = response.content
     if isinstance(updated_summary, list):
         updated_summary = " ".join(
@@ -200,18 +202,18 @@ def summarize_messages(state: AgentState, llm: ChatOpenAI):
         ).strip()
     else:
         updated_summary = updated_summary.strip() if updated_summary else ""
-
+ 
     if not updated_summary:
         updated_summary = existing_summary or "Summary unavailable."
-
+ 
     messages_to_remove = [RemoveMessage(id=m.id) for m in to_summarize]
-
+ 
     return {
         "summary": updated_summary,
         "messages": messages_to_remove,
     }
-
-
+ 
+ 
 def should_summarize(state: AgentState):
     """Routing function: decide whether to summarize messages."""
     messages = state["messages"]
@@ -219,3 +221,33 @@ def should_summarize(state: AgentState):
         return "summarize"
     else:
         return "continue"
+
+
+def execute_tools(state: AgentState):
+    """Custom tool execution node that catches errors and returns them as ToolMessages."""
+    from langgraph.prebuilt import ToolNode
+    tool_node = ToolNode(TOOLS)
+    try:
+        return tool_node.invoke(state)
+    except Exception as e:
+        messages = state.get("messages", [])
+        last_ai_msg = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
+        if last_ai_msg and last_ai_msg.tool_calls:
+            tool_call = last_ai_msg.tool_calls[0]
+            return {
+                "messages": [
+                    ToolMessage(
+                        tool_call_id=tool_call["id"],
+                        content=f"Error executing tool {tool_call['name']}: {str(e)}",
+                    )
+                ]
+            }
+        return {
+            "messages": [
+                ToolMessage(
+                    tool_call_id="unknown",
+                    content=f"Unexpected error during tool execution: {str(e)}",
+                )
+            ]
+        }
+

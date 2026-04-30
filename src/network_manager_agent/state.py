@@ -1,6 +1,6 @@
 """Agent state definition."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from langgraph.graph.message import add_messages
 from langgraph.graph import MessagesState
@@ -9,7 +9,7 @@ import operator
 
 class AgentState(MessagesState):
     """State for the network management agent.
-
+ 
     Extends MessagesState with agent-specific fields:
     - candidates: Available provider candidates
     - members: Member locations
@@ -27,3 +27,4 @@ class AgentState(MessagesState):
     county_specialty_thresholds: dict[str, dict[str, float]] = {}
     entity_summaries: list[dict] = []
     schema_profile: str = ""
+
