@@ -71,7 +71,7 @@ def _compute_coverage(
         for specialty, threshold in specialties.items():
             # Filter network providers by specialty
 
-            if spec_col:
+            if spec_col and "specialty" in net_df.columns:
                 specialty_network = net_df[net_df[spec_col] == specialty]
             else:
                 specialty_network = pd.DataFrame()
@@ -275,7 +275,8 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
     medicare_claims_col = "medicare_total_claims_amount" if "medicare_total_claims_amount" in df.columns else None
     confidence_col = "location_confidence" if "location_confidence" in df.columns else None
     new_pat_col = "new_patient_claims" if "new_patient_claims" in df.columns else None
-    claims_vol_col = "claims_volume" if "claims_volume" in df.columns else None
+    medicare_claims_vol_col = "medicare_claims_volume" if "medicare_claims_volume" in df.columns else None
+    total_claims_vol_col = "total_claims_volume" if "total_claims_volume" in df.columns else None
     city_col = "city" if "city" in df.columns else None
 
     if entity_col is None:
@@ -292,11 +293,16 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
     
     if new_pat_col:
         agg_map[new_pat_col] = lambda x: float(round((x == 'Yes').mean() * 100, 2)) if not x.empty else None
-    if claims_vol_col:
+    if medicare_claims_vol_col:
         def vol_dist(x):
             dist = x.dropna().value_counts().to_dict()
             return {k: int(v) for k, v in dist.items()}
-        agg_map[claims_vol_col] = vol_dist
+        agg_map[medicare_claims_vol_col] = vol_dist
+    if total_claims_vol_col:
+        def vol_dist(x):
+            dist = x.dropna().value_counts().to_dict()
+            return {k: int(v) for k, v in dist.items()}
+        agg_map[total_claims_vol_col] = vol_dist
     if city_col:
         agg_map[city_col] = "nunique"
 
@@ -341,7 +347,8 @@ def _aggregate_entities(candidates: list[dict]) -> pd.DataFrame:
         medicare_claims_col: "avg_medicare_total_claims_amount" if medicare_claims_col else None,
         confidence_col: "location_confidence_dist" if confidence_col else None,
         new_pat_col: "new_patient_rate" if new_pat_col else None,
-        claims_vol_col: "claims_volume_dist" if claims_vol_col else None,
+        medicare_claims_vol_col: "medicare_claims_volume_dist" if medicare_claims_vol_col else None,
+        total_claims_vol_col: "total_claims_volume_dist" if total_claims_vol_col else None,
         city_col: "geographic_reach" if city_col else None,
         "_sum_total_claims_amount": "total_claims_amount",
         "_sum_medicare_total_claims_amount": "total_medicare_claims_amount",

@@ -18,7 +18,8 @@ CANONICAL_COLUMNS = {
     "total_claims_amount": ["total claims amount"],
     "medicare_total_claims_amount": ["medicare total claims amount"],
     "new_patient_claims": ["medicare new patient claims"],
-    "claims_volume": ["medicare claims volume", "total claims volume"],
+    "medicare_claims_volume": ["medicare claims volume"],
+    "total_claims_volume": ["total claims volume"],
     "city": ["city"],
 }
 
