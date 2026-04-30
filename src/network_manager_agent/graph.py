@@ -15,7 +15,7 @@ from .nodes import (
 )
 
 
-def build_agent(llm: ChatOpenAI, candidates: list[dict], members: list[dict], county_specialty_thresholds: dict[str, dict[str, float]] = None):
+def build_agent(llm: ChatOpenAI):
     """Build and compile the network management agent graph.
 
     Args:

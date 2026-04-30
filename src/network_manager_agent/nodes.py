@@ -42,10 +42,19 @@ def network_manager(state: AgentState, llm: ChatOpenAI):
         scope_lines.append(f"- {county}: {spec_str}")
     scope_section = "\n".join(scope_lines) if scope_lines else ""
 
-    # Inject candidate schema into system prompt
-    candidates = state.get("candidates", [])
-    schema_profile = get_candidate_schema_profile(candidates)
-    schema_section = json.dumps(schema_profile, indent=2) if schema_profile else "No schema available."
+    # Inject candidate schema into system prompt (pre-computed or fallback)
+    schema_section = state.get("schema_profile", "")
+    if not schema_section:
+        candidates = state.get("candidates", [])
+        entity_summaries = state.get("entity_summaries", [])
+        schema_profile = get_candidate_schema_profile(
+            candidates=candidates,
+            entity_summaries=entity_summaries,
+        )
+        if isinstance(schema_profile, dict) and schema_profile:
+            schema_section = json.dumps(schema_profile, indent=2)
+        else:
+            schema_section = "No schema available."
 
     system_message_content = f'''
 You are an assistant responsible for managing a healthcare provider network.
@@ -74,21 +83,14 @@ RULES
    Always summarize what was accomplished when the task is complete.
 8. When choosing between entities, use simulate_network_change with compare_scenarios
    to evaluate all options in a single call.
-9. Be decisive. After gathering sufficient data, take action. Avoid repeating the same
-    reasoning or simulation multiple times.
-10. If the user asks for recommendations, analysis, or evaluation — provide the results
-    and stop. Do NOT add entities unless the user explicitly says "add", "commit", or
-    "go ahead" or similar directive to proceed.
+ 9. Be decisive. After gathering sufficient data, present your findings.
+    Do not repeat the same reasoning or simulations.
+ 10. If the user asks for recommendations, analysis, or evaluation — present your findings
+    and stop. You may suggest entities or ask if the user wants to proceed, but do NOT
+    call add_contract_entity in the same response.
 '''
 
     messages_history = state.get("messages", [])
-    original_message = state.get("original_message") or ""
-
-    if not original_message:
-        for msg in messages_history:
-            if isinstance(msg, HumanMessage):
-                original_message = msg.content
-                break
 
     summary = state.get("summary", "")
     anchor = _get_anchor_message(state)
@@ -113,7 +115,6 @@ RULES
 
     return {
         "messages": [response],
-        "original_message": original_message,
     }
 
 

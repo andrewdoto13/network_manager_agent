@@ -16,6 +16,8 @@ class AgentState(MessagesState):
     - network: Currently selected providers (accumulated)
     - summary: Running summary of agent progress
     - original_message: The user's initial request
+    - entity_summaries: Pre-computed aggregated entity summaries (cached)
+    - schema_profile: Pre-computed JSON schema profile string for system prompt
     """
     candidates: list[dict] = []
     members: list[dict] = []
@@ -23,3 +25,5 @@ class AgentState(MessagesState):
     summary: str = ""
     original_message: str = ""
     county_specialty_thresholds: dict[str, dict[str, float]] = {}
+    entity_summaries: list[dict] = []
+    schema_profile: str = ""

@@ -6,6 +6,28 @@ from pathlib import Path
 from .config import DATA_DIR
 
 
+def normalize_coordinates(df: pd.DataFrame) -> None:
+    """Normalize scaled integer coordinates in-place.
+
+    Heuristic: if latitude mean is significantly outside [-90, 90], values are
+    likely scaled by 1e6 (e.g. 43451784 -> 43.451784). Longitudes are negated
+    to ensure they are negative (West).
+
+    Args:
+        df: DataFrame with lat/lon columns to normalize.
+    """
+    lat_col = next((c for c in df.columns if c.lower() in ["lat", "latitude"]), None)
+    lon_col = next((c for c in df.columns if c.lower() in ["lon", "longitude"]), None)
+
+    if lat_col is None or lon_col is None:
+        return
+
+    if df[lat_col].abs().mean() > 1000:
+        df[lat_col] = df[lat_col] / 1_000_000.0
+        df[lon_col] = df[lon_col] / 1_000_000.0
+        df.loc[df[lon_col] > 0, lon_col] *= -1
+
+
 def load_candidates(path: Path | None = None) -> list[dict]:
     """Load candidate entities from CSV and normalize coordinates.
     
@@ -19,21 +41,7 @@ def load_candidates(path: Path | None = None) -> list[dict]:
         path = DATA_DIR / "mi_market_data.csv"
 
     df = pd.read_csv(path).reset_index().rename(columns={"index": "id"})
-    
-    # Normalize coordinates if they are scaled integers (e.g., 43451784 instead of 43.451784)
-    # Heuristic: if latitude mean is significantly outside [-90, 90], it's likely scaled.
-    lat_col = next((c for c in df.columns if c.lower() in ["lat", "latitude"]), None)
-    lon_col = next((c for c in df.columns if c.lower() in ["lon", "longitude"]), None)
-    
-    if lat_col and lon_col:
-        # Check if values are scaled (e.g., > 1000)
-        if df[lat_col].abs().mean() > 1000:
-            df[lat_col] = df[lat_col] / 1_000_000.0
-            df[lon_col] = df[lon_col] / 1_000_000.0
-            
-            # Ensure longitudes are negative (West)
-            df.loc[df[lon_col] > 0, lon_col] *= -1
-            
+    normalize_coordinates(df)
     return df.to_dict(orient="records")
 
 

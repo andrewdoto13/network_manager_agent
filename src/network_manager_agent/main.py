@@ -3,102 +3,19 @@
 import argparse
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
 
 from .config import LLMConfig, create_llm
 from .data import load_data
+from .tools import (
+    _filter_by_service_area,
+    precompute_entity_summaries,
+    precompute_schema_profile,
+)
 from .graph import build_agent
-
-
-def run_agent(agent, inputs: dict, config: dict):
-    """Run the agent and stream output to console.
-
-    Args:
-        agent: Compiled LangGraph agent.
-        inputs: Agent input dict with 'messages', 'candidates', 'members'.
-        config: LangGraph config dict with thread_id.
-    """
-    print("Starting Agent Execution...\n")
-
-    for chunk in agent.stream(inputs, stream_mode="updates", config=config):
-        for node_name, output in chunk.items():
-            print(f"\n>>>> NODE: {node_name} <<<<")
-            if node_name in ("network_manager", "tools"):
-                if "messages" in output:
-                    for m in output["messages"]:
-                        print("   --- CURRENT CONTENT ---")
-                        m.pretty_print()
-
-                        if hasattr(m, 'tool_calls') and m.tool_calls:
-                            print("   --- TOOL CALL ---")
-                            for tc in m.tool_calls:
-                                print(f"   -> {tc['name']}({json.dumps(tc['args'], default=str)})")
-
-    # Save action log
-    history = list(agent.get_state_history(config))
-    history.reverse()
-
-    last_message_id = None
-    filename = f"react_agent_actions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write("=== AGENT ACTION LOG ===\n\n")
-
-        for i, state in enumerate(history):
-            messages = state.values.get("messages", [])
-            if not messages:
-                continue
-
-            m = messages[-1]
-
-            if getattr(m, "id", None) == last_message_id:
-                node_type = state.metadata.get("node", "update_state")
-                if node_type in ("update_state", "summarize_messages"):
-                    continue
-                f.write(f"[STEP {i}] STATE UPDATE\n")
-                f.write(f"  Node executed: {node_type}\n\n")
-                continue
-
-            last_message_id = getattr(m, "id", None)
-
-            from langchain_core.messages import AIMessage, ToolMessage, HumanMessage as HM
-
-            if isinstance(m, AIMessage) and m.tool_calls:
-                f.write(f"[STEP {i}] AI -> TOOL CALL\n")
-                for tc in m.tool_calls:
-                    f.write(f"  -> {tc['name']}({json.dumps(tc['args'], default=str)})\n")
-                f.write("\n")
-                continue
-
-            if isinstance(m, ToolMessage):
-                content = m.content
-                if isinstance(content, list):
-                    content = " ".join(str(c) for c in content)
-                f.write(f"[STEP {i}] TOOL RESULT ({m.name})\n")
-                f.write(f"  {content.strip()}\n\n")
-                continue
-
-            if isinstance(m, AIMessage):
-                content = m.content
-                if isinstance(content, list):
-                    content = " ".join(str(c) for c in content)
-                if content.strip():
-                    f.write(f"[STEP {i}] AI OUTPUT\n")
-                    f.write(f"  {content.strip()}\n\n")
-                continue
-
-            if isinstance(m, HM):
-                content = m.content
-                if isinstance(content, list):
-                    content = " ".join(str(c) for c in content)
-                f.write(f"[STEP {i}] HUMAN INPUT\n")
-                f.write(f"  {content.strip()}\n\n")
-                continue
-
-    print(f"\nExecution Complete. Detailed history saved to '{filename}'")
+from .ui import run_agent
 
 
 def main():
@@ -123,10 +40,10 @@ def main():
         help="LLM model name (overrides config default)",
     )
     parser.add_argument(
-        "--hospitals",
+        "--candidates",
         type=Path,
         default=None,
-        help="Path to hospitals CSV",
+        help="Path to candidates CSV",
     )
     parser.add_argument(
         "--members",
@@ -152,12 +69,6 @@ def main():
 
     llm = create_llm(config)
 
-    # Load data
-    candidates, members = load_data(
-        candidates_path=args.hospitals,
-        members_path=args.members,
-    )
-
     county_specialty_thresholds = {}
     if args.county_specialty_thresholds:
         try:
@@ -166,8 +77,27 @@ def main():
             print("Error: --county-specialty-thresholds must be a valid JSON string.")
             sys.exit(1)
 
+    # Load data
+    candidates, members = load_data(
+        candidates_path=args.candidates,
+        members_path=args.members,
+    )
+
+    # Pre-compute: filter by service area, aggregate entities, build schema
+    filtered_candidates = _filter_by_service_area(
+        candidates, members, county_specialty_thresholds
+    )
+    entity_summaries = precompute_entity_summaries(filtered_candidates)
+    schema_profile = precompute_schema_profile(entity_summaries)
+
+    print(
+        f"Loaded {len(candidates)} raw candidates "
+        f"-> {len(filtered_candidates)} in service area "
+        f"-> {len(entity_summaries)} entities"
+    )
+
     # Build agent
-    agent = build_agent(llm, candidates, members, county_specialty_thresholds=county_specialty_thresholds)
+    agent = build_agent(llm)
 
     # Create thread config
     thread_config = {"configurable": {"thread_id": "1"}}
@@ -183,9 +113,11 @@ def main():
                 messages = [HumanMessage(content=prompt)]
                 inputs = {
                     "messages": messages,
-                    "candidates": candidates,
+                    "candidates": filtered_candidates,
                     "members": members,
                     "county_specialty_thresholds": county_specialty_thresholds,
+                    "entity_summaries": entity_summaries,
+                    "schema_profile": schema_profile,
                 }
                 run_agent(agent, inputs, thread_config)
 
@@ -201,9 +133,11 @@ def main():
         messages = [HumanMessage(content=prompt)]
         inputs = {
             "messages": messages,
-            "candidates": candidates,
+            "candidates": filtered_candidates,
             "members": members,
             "county_specialty_thresholds": county_specialty_thresholds,
+            "entity_summaries": entity_summaries,
+            "schema_profile": schema_profile,
         }
         run_agent(agent, inputs, thread_config)
 

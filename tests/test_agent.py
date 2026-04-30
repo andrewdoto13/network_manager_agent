@@ -10,6 +10,10 @@ from network_manager_agent.tools import (
     add_contract_entity,
     get_network_status,
     simulate_network_change,
+    _filter_by_service_area,
+    precompute_entity_summaries,
+    precompute_schema_profile,
+    get_candidate_schema_profile,
 )
 
 
@@ -94,10 +98,12 @@ class TestTools:
             {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B", "Primary Institutional Affiliation": "Health System B", "Medicare New Patient Claims": "No", "Total Claims Volume": "Standard", "City": "City B"},
             {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Primary Contract Entity": "Entity A", "Primary Institutional Affiliation": "Health System A", "Medicare New Patient Claims": "Yes", "Total Claims Volume": "Standard", "City": "City A"},
         ]
+        entity_summaries = precompute_entity_summaries(candidates)
         result = get_candidates.invoke({
             "specialties": ["hospital"],
             "candidates": candidates,
             "network": [],
+            "entity_summaries": entity_summaries,
         })
         assert isinstance(result, list)
         assert len(result) <= 5
@@ -114,23 +120,26 @@ class TestTools:
             {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
             {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
         ]
+        entity_summaries = precompute_entity_summaries(candidates)
         # First call
         result1 = get_candidates.invoke({
             "specialties": ["hospital"],
             "candidates": candidates,
             "network": [],
+            "entity_summaries": entity_summaries,
         })
         # Add first result to network (simulate adding one of the entities)
         # result1 is a list of entity summaries
         network_entity = result1[0]["entity_id"]
         # To simulate the entity being in network, we add its providers
         network = [p for p in candidates if p["Primary Contract Entity"] == network_entity]
-        
+
         # Second call should exclude already-added entities
         result2 = get_candidates.invoke({
             "specialties": ["hospital"],
             "candidates": candidates,
             "network": network,
+            "entity_summaries": entity_summaries,
         })
         if isinstance(result2, list):
             result2_ids = {e["entity_id"] for e in result2}
@@ -138,10 +147,12 @@ class TestTools:
 
     def test_get_candidates_returns_message_when_none_available(self):
         candidates = [{"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "Primary Contract Entity": "Entity A"}]
+        entity_summaries = precompute_entity_summaries(candidates)
         result = get_candidates.invoke({
             "specialties": ["hospital"],
             "candidates": candidates,
             "network": [candidates[0]],
+            "entity_summaries": entity_summaries,
         })
         assert isinstance(result, str)
         assert "No available entities" in result
@@ -612,3 +623,199 @@ class TestSimulateNetworkChange:
         assert len(result["member_coverage"]) == 1
         assert result["member_coverage"][0]["specialty"] == "cardiologist"
         assert result["member_coverage"][0]["coverage_percentage"] == 0.0
+
+
+class TestServiceAreaFiltering:
+    """Tests for _filter_by_service_area."""
+
+    def test_empty_thresholds_returns_all(self):
+        candidates = [
+            {"id": 1, "lat": 42.0, "lon": -83.0, "Primary Contract Entity": "A"},
+            {"id": 2, "lat": 45.0, "lon": -90.0, "Primary Contract Entity": "B"},
+        ]
+        members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
+        result = _filter_by_service_area(candidates, members, {})
+        assert len(result) == 2
+
+    def test_entity_retained_when_one_provider_in_bounds(self):
+        candidates = [
+            {"id": 1, "lat": 42.3, "lon": -83.5, "Primary Contract Entity": "Entity A"},
+            {"id": 2, "lat": 47.0, "lon": -85.0, "Primary Contract Entity": "Entity A"},
+            {"id": 3, "lat": 45.0, "lon": -90.0, "Primary Contract Entity": "Entity B"},
+        ]
+        members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
+        thresholds = {"wayne": {"hospital": 10.0}}
+        result = _filter_by_service_area(candidates, members, thresholds)
+        result_ids = {r["id"] for r in result}
+        assert 1 in result_ids
+        assert 2 in result_ids
+        assert 3 not in result_ids
+
+    def test_entity_excluded_when_no_providers_in_bounds(self):
+        candidates = [
+            {"id": 1, "lat": 47.0, "lon": -85.0, "Primary Contract Entity": "Entity A"},
+            {"id": 2, "lat": 48.0, "lon": -86.0, "Primary Contract Entity": "Entity A"},
+        ]
+        members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
+        thresholds = {"wayne": {"hospital": 10.0}}
+        result = _filter_by_service_area(candidates, members, thresholds)
+        assert len(result) == 0
+
+    def test_empty_candidates_returns_empty(self):
+        result = _filter_by_service_area([], [{"id": 1, "lat": 42.3, "lon": -83.5}], {"wayne": {"hospital": 10.0}})
+        assert result == []
+
+    def test_empty_members_returns_all(self):
+        candidates = [{"id": 1, "lat": 42.0, "lon": -83.0, "Primary Contract Entity": "A"}]
+        result = _filter_by_service_area(candidates, [], {"wayne": {"hospital": 10.0}})
+        assert result == candidates
+
+    def test_scaled_coordinates_normalized(self):
+        candidates = [
+            {"id": 1, "Latitude": 42300000, "Longitude": 83500000, "Primary Contract Entity": "Entity A"},
+            {"id": 2, "Latitude": 47000000, "Longitude": 85000000, "Primary Contract Entity": "Entity B"},
+        ]
+        members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
+        thresholds = {"wayne": {"hospital": 10.0}}
+        result = _filter_by_service_area(candidates, members, thresholds)
+        result_ids = {r["id"] for r in result}
+        assert 1 in result_ids
+        assert 2 not in result_ids
+
+
+class TestPrecomputeFunctions:
+    """Tests for precompute_entity_summaries and precompute_schema_profile."""
+
+    def test_precompute_entity_summaries_basic(self):
+        candidates = [
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
+            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity A"},
+            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Primary Contract Entity": "Entity B"},
+        ]
+        result = precompute_entity_summaries(candidates)
+        assert isinstance(result, list)
+        assert len(result) == 2
+        entity_map = {r["Primary Contract Entity"]: r for r in result}
+        assert entity_map["Entity A"]["provider_count"] == 2
+        assert entity_map["Entity B"]["provider_count"] == 1
+
+    def test_precompute_entity_summaries_empty(self):
+        assert precompute_entity_summaries([]) == []
+
+    def test_precompute_schema_profile_basic(self):
+        candidates = [
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
+            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
+        ]
+        summaries = precompute_entity_summaries(candidates)
+        profile = precompute_schema_profile(summaries)
+        assert isinstance(profile, str)
+        assert "avg_effectiveness" in profile
+        assert "provider_count" in profile
+
+    def test_precompute_schema_profile_empty(self):
+        profile = precompute_schema_profile([])
+        assert profile == "No schema available."
+
+    def test_get_candidate_schema_profile_with_summaries(self):
+        candidates = [
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
+        ]
+        summaries = precompute_entity_summaries(candidates)
+        profile = get_candidate_schema_profile(entity_summaries=summaries)
+        assert isinstance(profile, dict)
+        assert "avg_effectiveness" in profile
+
+    def test_get_candidate_schema_profile_fallback_candidates(self):
+        candidates = [
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
+        ]
+        profile = get_candidate_schema_profile(candidates=candidates)
+        assert isinstance(profile, dict)
+        assert "avg_effectiveness" in profile
+
+
+class TestCachedAggregation:
+    """Tests that get_candidates uses pre-computed entity_summaries."""
+
+    def test_get_candidates_uses_cached_summaries(self):
+        candidates = [
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
+        ]
+        entity_summaries = precompute_entity_summaries(candidates)
+        result = get_candidates.invoke({
+            "specialties": ["hospital"],
+            "candidates": candidates,
+            "network": [],
+            "entity_summaries": entity_summaries,
+        })
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+    def test_get_candidates_fallback_without_summaries(self):
+        candidates = [
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Primary Contract Entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Primary Contract Entity": "Entity B"},
+        ]
+        result = get_candidates.invoke({
+            "specialties": ["hospital"],
+            "candidates": candidates,
+            "network": [],
+            "entity_summaries": [],
+        })
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+    def test_full_pipeline_filter_then_aggregate(self):
+        candidates = [
+            {"id": 1, "lat": 42.3, "lon": -83.5, "specialty": "hospital", "effectiveness": 5, "Primary Contract Entity": "Entity A"},
+            {"id": 2, "lat": 42.4, "lon": -83.4, "specialty": "hospital", "effectiveness": 3, "Primary Contract Entity": "Entity A"},
+            {"id": 3, "lat": 47.0, "lon": -85.0, "specialty": "hospital", "effectiveness": 4, "Primary Contract Entity": "Entity B"},
+        ]
+        members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
+        thresholds = {"wayne": {"hospital": 10.0}}
+
+        filtered = _filter_by_service_area(candidates, members, thresholds)
+        summaries = precompute_entity_summaries(filtered)
+        profile = precompute_schema_profile(summaries)
+
+        assert len(filtered) == 2
+        assert len(summaries) == 1
+        assert summaries[0]["Primary Contract Entity"] == "Entity A"
+        assert "avg_effectiveness" in profile
+
+    def test_total_claims_amount_aggregation(self):
+        candidates = [
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Total Claims Amount": 100.0, "Medicare Total Claims Amount": 50.0, "Primary Contract Entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Total Claims Amount": 200.0, "Medicare Total Claims Amount": 80.0, "Primary Contract Entity": "Entity A"},
+            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Total Claims Amount": 500.0, "Medicare Total Claims Amount": 250.0, "Primary Contract Entity": "Entity B"},
+        ]
+        summaries = precompute_entity_summaries(candidates)
+        entity_map = {r["Primary Contract Entity"]: r for r in summaries}
+        assert entity_map["Entity A"]["total_claims_amount"] == 300.0
+        assert entity_map["Entity A"]["avg_total_claims_amount"] == 150.0
+        assert entity_map["Entity A"]["total_medicare_claims_amount"] == 130.0
+        assert entity_map["Entity B"]["total_claims_amount"] == 500.0
+        assert entity_map["Entity B"]["avg_total_claims_amount"] == 500.0
+
+    def test_get_candidates_sort_by_total_claims(self):
+        candidates = [
+            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "Total Claims Amount": 100.0, "Primary Contract Entity": "Entity A"},
+            {"id": 2, "specialty": "hospital", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "Total Claims Amount": 200.0, "Primary Contract Entity": "Entity A"},
+            {"id": 3, "specialty": "hospital", "lat": 42.2, "lon": -83.2, "effectiveness": 4, "Total Claims Amount": 500.0, "Primary Contract Entity": "Entity B"},
+        ]
+        entity_summaries = precompute_entity_summaries(candidates)
+        result = get_candidates.invoke({
+            "specialties": ["hospital"],
+            "candidates": candidates,
+            "network": [],
+            "entity_summaries": entity_summaries,
+            "sort_by": "total_claims_amount",
+            "ascending": False,
+        })
+        assert isinstance(result, list)
+        assert result[0]["entity_id"] == "Entity B"
+        assert result[1]["entity_id"] == "Entity A"
+        assert result[0]["metrics"]["total_claims"] == 500.0
+        assert result[1]["metrics"]["total_claims"] == 300.0

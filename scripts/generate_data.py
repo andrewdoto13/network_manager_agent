@@ -75,7 +75,7 @@ def generate_members(
     })
 
 
-def generate_hospitals(
+def generate_candidates(
     n: int = 20,
     mode: str = "mixed",
     std_dev: float = 0.02,
@@ -83,19 +83,20 @@ def generate_hospitals(
     county: str = "wayne",
     rng: np.random.Generator | None = None,
 ) -> pd.DataFrame:
-    """Generate synthetic hospital candidate locations.
-
+    """Generate synthetic candidate locations.
+    
     Args:
-        n: Total number of hospital candidates.
+        n: Total number of candidate entities.
         mode: 'cluster' (all clustered) or 'mixed' (clustered + uniform).
         std_dev: Standard deviation for cluster point distribution.
         cluster_weight: Fraction of points clustered (used only in 'mixed' mode).
-        county: County name for all hospitals.
+        county: County name for all candidates.
         rng: NumPy random generator for reproducibility.
-
+    
     Returns:
         DataFrame with lat, lon, cluster, county, specialty, effectiveness columns.
     """
+
     if rng is None:
         rng = np.random.default_rng()
 
@@ -155,12 +156,12 @@ def generate_hospitals(
         raise ValueError("mode must be 'cluster' or 'mixed'")
 
 
-def plot_data(members_df: pd.DataFrame, hospitals_df: pd.DataFrame) -> None:
-    """Plot member locations and hospital candidates.
+def plot_data(members_df: pd.DataFrame, candidates_df: pd.DataFrame) -> None:
+    """Plot member locations and candidate locations.
 
     Args:
         members_df: DataFrame of member locations.
-        hospitals_df: DataFrame of hospital candidates.
+        candidates_df: DataFrame of candidate locations.
     """
     import matplotlib.pyplot as plt
     import seaborn as sns
@@ -180,14 +181,14 @@ def plot_data(members_df: pd.DataFrame, hospitals_df: pd.DataFrame) -> None:
     sns.scatterplot(
         x="lon",
         y="lat",
-        data=hospitals_df,
+        data=candidates_df,
         s=120,
         color="crimson",
         edgecolor="black",
         alpha=0.9,
     )
 
-    plt.suptitle("Synthetic Members + Hospital Locations")
+    plt.suptitle("Synthetic Members + Candidate Locations")
     plt.title("Wayne County, MI")
     plt.grid(True, linestyle="--", alpha=0.4)
     plt.tight_layout()
@@ -197,19 +198,19 @@ def plot_data(members_df: pd.DataFrame, hospitals_df: pd.DataFrame) -> None:
 def main() -> None:
     """CLI entry point for synthetic data generation."""
     parser = argparse.ArgumentParser(
-        description="Generate synthetic healthcare member and hospital data."
+        description="Generate synthetic healthcare member and candidate data."
     )
     parser.add_argument(
         "--n-members", type=int, default=2000,
         help="Number of member locations to generate (default: 2000)"
     )
     parser.add_argument(
-        "--n-hospitals", type=int, default=20,
-        help="Number of hospital candidates to generate (default: 20)"
+        "--n-candidates", type=int, default=20,
+        help="Number of candidate entities to generate (default: 20)"
     )
     parser.add_argument(
         "--mode", choices=["cluster", "mixed"], default="mixed",
-        help="Hospital generation mode: 'cluster' or 'mixed' (default: mixed)"
+        help="Candidate generation mode: 'cluster' or 'mixed' (default: mixed)"
     )
     parser.add_argument(
         "--seed", type=int, default=None,
@@ -224,6 +225,8 @@ def main() -> None:
         help="Display visualization plot"
     )
 
+
+
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -231,22 +234,22 @@ def main() -> None:
     print(f"Generating {args.n_members} member locations...")
     members_df = generate_members(n=args.n_members, rng=rng)
 
-    print(f"Generating {args.n_hospitals} hospital candidates (mode={args.mode})...")
-    hospitals_df = generate_hospitals(n=args.n_hospitals, mode=args.mode, rng=rng)
+    print(f"Generating {args.n_candidates} candidate entities (mode={args.mode})...")
+    candidates_df = generate_candidates(n=args.n_candidates, mode=args.mode, rng=rng)
 
     args.output.mkdir(parents=True, exist_ok=True)
 
     members_path = args.output / "members.csv"
-    hospitals_path = args.output / "hospitals.csv"
+    candidates_path = args.output / "candidates.csv"
 
     members_df.to_csv(members_path, index=False)
-    hospitals_df.to_csv(hospitals_path, index=False)
+    candidates_df.to_csv(candidates_path, index=False)
 
     print(f"Saved members to {members_path}")
-    print(f"Saved hospitals to {hospitals_path}")
+    print(f"Saved candidates to {candidates_path}")
 
     if args.plot:
-        plot_data(members_df, hospitals_df)
+        plot_data(members_df, candidates_df)
 
 
 if __name__ == "__main__":

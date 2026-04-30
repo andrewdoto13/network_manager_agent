@@ -7,7 +7,11 @@ from pathlib import Path
 
 @dataclass
 class LLMConfig:
-    """Configuration for the LLM backend."""
+    """Configuration for the LLM backend.
+
+    Defaults to http://10.0.0.228:8080/v1 (OpenAI-compatible endpoint).
+    Override via LLM_BASE_URL environment variable for local/dev use.
+    """
     base_url: str = os.getenv("LLM_BASE_URL", "http://10.0.0.228:8080/v1")
     api_key: str = os.getenv("LLM_API_KEY", "not-needed")
     model: str = os.getenv("LLM_MODEL", "llm")

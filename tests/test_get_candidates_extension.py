@@ -1,6 +1,6 @@
 import pytest
 import pandas as pd
-from network_manager_agent.tools import get_candidates
+from network_manager_agent.tools import get_candidates, precompute_entity_summaries
 
 @pytest.fixture
 def mock_candidates():
@@ -17,11 +17,12 @@ def mock_network():
     return []
 
 def test_get_candidates_multi_specialty(mock_candidates, mock_network):
-    # Test requesting two specialties
+    entity_summaries = precompute_entity_summaries(mock_candidates)
     result = get_candidates.invoke({
         "specialties": ["hospital", "clinic"],
         "candidates": mock_candidates,
         "network": mock_network,
+        "entity_summaries": entity_summaries,
     })
     assert isinstance(result, list)
     # Should find entities from both
@@ -31,16 +32,12 @@ def test_get_candidates_multi_specialty(mock_candidates, mock_network):
     assert "Entity D" in entity_ids
 
 def test_get_candidates_weighted_metrics(mock_candidates, mock_network):
-    # Test custom scoring: 100% effectiveness, 0% provider_count
-    # Entity A: 5.0 * 1.0 + 10 * 0.0 = 5.0
-    # Entity C: 1.0 * 1.0 + 1 * 0.0 = 1.0
-    # Entity E: 3.0 * 1.0 + 20 * 0.0 = 3.0
-    # Expected order (desc): A, E, C
-    
+    entity_summaries = precompute_entity_summaries(mock_candidates)
     result = get_candidates.invoke({
         "specialties": ["hospital"],
         "candidates": mock_candidates,
         "network": mock_network,
+        "entity_summaries": entity_summaries,
         "weighted_metrics": {"avg_effectiveness": 1.0, "provider_count": 0.0},
         "ascending": False
     })
@@ -50,16 +47,12 @@ def test_get_candidates_weighted_metrics(mock_candidates, mock_network):
     assert result[2]["entity_id"] == "Entity C"
 
 def test_get_candidates_weighted_metrics_mixed(mock_candidates, mock_network):
-    # Test custom scoring: 0% effectiveness, 100% provider_count
-    # Entity A: 5.0 * 0.1 + 10 * 1.0 = 10.5
-    # Entity C: 1.0 * 0.1 + 1 * 1.0 = 1.1
-    # Entity E: 3.0 * 0.1 + 20 * 1.0 = 10.3
-    # Expected order (desc): A, E, C
-    
+    entity_summaries = precompute_entity_summaries(mock_candidates)
     result = get_candidates.invoke({
         "specialties": ["hospital"],
         "candidates": mock_candidates,
         "network": mock_network,
+        "entity_summaries": entity_summaries,
         "weighted_metrics": {"avg_effectiveness": 0.1, "provider_count": 1.0},
         "ascending": False
     })
@@ -69,17 +62,21 @@ def test_get_candidates_weighted_metrics_mixed(mock_candidates, mock_network):
     assert result[2]["entity_id"] == "Entity C"
 
 def test_get_candidates_limit(mock_candidates, mock_network):
+    entity_summaries = precompute_entity_summaries(mock_candidates)
     result = get_candidates.invoke({
         "specialties": ["hospital"],
         "candidates": mock_candidates,
         "network": mock_network,
+        "entity_summaries": entity_summaries,
         "limit": 2
     })
     assert len(result) == 2
 
 def test_get_candidates_no_specialties(mock_candidates, mock_network):
+    entity_summaries = precompute_entity_summaries(mock_candidates)
     result = get_candidates.invoke({
         "candidates": mock_candidates,
         "network": mock_network,
+        "entity_summaries": entity_summaries,
     })
     assert result == "No specialties provided."
