@@ -1,5 +1,5 @@
 import pytest
-import pandas as pd
+
 from network_manager_agent.tools import get_candidates, precompute_entity_summaries
 
 @pytest.fixture

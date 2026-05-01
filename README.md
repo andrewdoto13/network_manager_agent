@@ -53,8 +53,8 @@ python -m network_manager_agent.main
 ### Candidates (`data/raw/mi_market_data.csv`)
 Includes provider-level metrics such as `Effectiveness`, `Efficiency`, `Medicare New Patient Claims`, and `Total Claims Volume`. These are aggregated at the entity level for the agent's decision-making.
 
-### Members (`data/raw/members.csv`)
-Includes member coordinates and county information.
+### Members (`data/raw/MedicareSampleCensus2023Q4.csv`)
+Contains Medicare provider location data with coordinates, county (`countyname`), and state information.
 
 ## Project Structure
 
@@ -63,7 +63,6 @@ Includes member coordinates and county information.
 ├── pyproject.toml          # Project configuration and dependencies
 ├── README.md               # This file
 ├── AGENTS.md               # Agent instructions
-├── AGENT_ASSESSMENT.md     # Technical assessment of the agent
 ├── src/                    # Source code
 │   └── network_manager_agent/
 │       ├── config.py       # LLM and agent configuration
@@ -78,7 +77,7 @@ Includes member coordinates and county information.
 ├── data/                   # Data files
 │   └── raw/
 │       ├── mi_market_data.csv
-│       └── members.csv
+│       └── MedicareSampleCensus2023Q4.csv
 └── tests/                  # Test suite
     └── test_agent.py
 ```

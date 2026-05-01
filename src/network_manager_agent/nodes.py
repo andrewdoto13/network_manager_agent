@@ -3,7 +3,6 @@
 import json
 from typing import Any
 
-from langgraph.prebuilt import ToolNode
 from langchain_core.messages import (
     SystemMessage,
     HumanMessage,
@@ -30,7 +29,7 @@ def _get_anchor_message(state: AgentState) -> str:
     for msg in reversed(state.get("messages", [])):
         if isinstance(msg, HumanMessage):
             return msg.content
-    return state.get("original_message") or "Please continue."
+    return "Please continue."
 
 
 def network_manager(state: AgentState, llm: ChatOpenAI):
@@ -39,9 +38,10 @@ def network_manager(state: AgentState, llm: ChatOpenAI):
     county_specialty_thresholds = state.get("county_specialty_thresholds", {})
 
     scope_lines = []
-    for county, specialties in county_specialty_thresholds.items():
-        spec_str = ", ".join(f"{spec} ({threshold}mi)" for spec, threshold in specialties.items())
-        scope_lines.append(f"- {county}: {spec_str}")
+    for state_val, counties in county_specialty_thresholds.items():
+        for county, specialties in counties.items():
+            spec_str = ", ".join(f"{spec} ({threshold}mi)" for spec, threshold in specialties.items())
+            scope_lines.append(f"- {state_val}/{county}: {spec_str}")
     scope_section = "\n".join(scope_lines) if scope_lines else ""
 
     # Inject candidate schema into system prompt (pre-computed or fallback)

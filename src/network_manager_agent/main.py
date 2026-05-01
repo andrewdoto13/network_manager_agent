@@ -12,7 +12,7 @@ from .data import load_data
 from .tools import (
     _filter_by_service_area,
     precompute_entity_summaries,
-    precompute_schema_profile,
+    get_candidate_schema_profile,
 )
 from .graph import build_agent
 from .ui import run_agent
@@ -73,7 +73,7 @@ def main():
         "--county-specialty-thresholds",
         type=str,
         default=None,
-        help="JSON string mapping county names to specialty->threshold dicts (e.g. '{\"wayne\": {\"cardiologist\": 10.0, \"pcp\": 5.0}}'). Default threshold is 20.0 miles.",
+        help="JSON string mapping state->county->specialty->threshold (e.g. '{\"mi\": {\"wayne\": {\"general practice\": 20.0, \"cardiology\": 10.0}}'). Default threshold is 20.0 miles.",
     )
 
     args = parser.parse_args()
@@ -102,17 +102,17 @@ def main():
     )
 
     # Pre-compute: filter by service area, aggregate entities, build schema
-    filtered_candidates = _filter_by_service_area(
+    filtered_candidates, filtered_members = _filter_by_service_area(
         candidates, members, county_specialty_thresholds
     )
-    
+
     entity_summaries = precompute_entity_summaries(filtered_candidates)
-    schema_profile = precompute_schema_profile(entity_summaries)
+    schema_profile = get_candidate_schema_profile(candidates=filtered_candidates)
 
 
     print(
-        f"Loaded {len(candidates)} raw candidates "
-        f"-> {len(filtered_candidates)} in service area "
+        f"Loaded {len(candidates)} raw candidates, {len(members)} raw members "
+        f"-> {len(filtered_candidates)} in service area, {len(filtered_members)} scoped members "
         f"-> {len(entity_summaries)} entities"
     )
 
@@ -131,7 +131,7 @@ def main():
         while prompt.lower() not in ("quit", "exit", "q"):
                 if prompt:
                     run_agent_session(
-                        agent, prompt, filtered_candidates, members, 
+                        agent, prompt, filtered_candidates, filtered_members, 
                         county_specialty_thresholds, entity_summaries, 
                         schema_profile, thread_config
                     )
@@ -141,7 +141,7 @@ def main():
 
     if args.prompt:
         run_agent_session(
-            agent, args.prompt, filtered_candidates, members, 
+            agent, args.prompt, filtered_candidates, filtered_members, 
             county_specialty_thresholds, entity_summaries, 
             schema_profile, thread_config
         )

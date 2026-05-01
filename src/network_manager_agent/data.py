@@ -9,7 +9,8 @@ from .config import DATA_DIR
 CANONICAL_COLUMNS = {
     "lat": ["latitude", "lat"],
     "lon": ["longitude", "lon"],
-    "county": ["county"],
+    "state": ["state"],
+    "county": ["county", "countyname"],
     "entity": ["primary contract entity", "entity"],
     "specialty": ["specialty"],
     "effectiveness": ["effectiveness"],
@@ -94,19 +95,20 @@ def load_candidates(path: Path | None = None) -> list[dict]:
 
 
 def load_members(path: Path | None = None) -> list[dict]:
-    """Load member locations from CSV and normalize column names.
+    """Load member locations from the Medicare census CSV and normalize column names.
 
     Args:
-        path: Path to members.csv. Defaults to data/raw/members.csv.
+        path: Path to MedicareSampleCensus2023Q4.csv. Defaults to data/raw/MedicareSampleCensus2023Q4.csv.
 
     Returns:
         List of member dicts with canonical column names and an added 'id' column.
     """
     if path is None:
-        path = DATA_DIR / "members.csv"
+        path = DATA_DIR / "MedicareSampleCensus2023Q4.csv"
 
     df = pd.read_csv(path).reset_index().rename(columns={"index": "id"})
     _normalize_columns(df)
+    normalize_coordinates(df)
     return df.to_dict(orient="records")
 
 

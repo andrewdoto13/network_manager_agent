@@ -5,8 +5,6 @@ from unittest.mock import MagicMock
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
-    RemoveMessage,
-    SystemMessage,
     ToolMessage,
 )
 
@@ -30,13 +28,12 @@ def _make_llm(return_content="default response", return_tool_calls=None):
     return llm
 
 
-def _make_state(messages=None, summary="", original_message="", schema_profile="",
+def _make_state(messages=None, summary="", schema_profile="",
                 candidates=None, entity_summaries=None, county_specialty_thresholds=None):
     """Create an AgentState dict."""
     state = {
         "messages": messages or [],
         "summary": summary,
-        "original_message": original_message,
         "schema_profile": schema_profile,
         "candidates": candidates or [],
         "entity_summaries": entity_summaries or [],
@@ -63,7 +60,7 @@ class TestNetworkManager:
     def test_injects_scope_section(self):
         state = _make_state(
             messages=[HumanMessage(content="test prompt")],
-            county_specialty_thresholds={"wayne": {"hospital": 10.0, "pcp": 5.0}},
+            county_specialty_thresholds={"mi": {"wayne": {"hospital": 10.0, "pcp": 5.0}}},
         )
         llm = _make_llm()
         network_manager(state, llm)
@@ -133,16 +130,6 @@ class TestNetworkManager:
         assert "messages" in result
         assert len(result["messages"]) == 1
         assert isinstance(result["messages"][0], AIMessage)
-
-    def test_does_not_return_original_message(self):
-        state = _make_state(
-            messages=[HumanMessage(content="test prompt")],
-            original_message="old prompt",
-        )
-        llm = _make_llm()
-        result = network_manager(state, llm)
-
-        assert "original_message" not in result
 
 
 class TestUpdateState:

@@ -3,7 +3,7 @@
 ## Developer Commands
 - **Activate venv**: `source .venv/bin/activate`
 - **Run Agent**: `run-agent` (or `python -m network_manager_agent.main`)
-- **Generate Data**: `generate-data` (or `python -m scripts.generate_data`)
+
 - **Run Tests**: `pytest`
 - **Install**: `pip install -e ".[dev]"`
 
@@ -17,7 +17,8 @@
     - `src/network_manager_agent/data.py`: Data loading utilities.
 - **Configuration**: `src/network_manager_agent/config.py`.
 - **Entry Point**: `src/network_manager_agent/main.py`.
-- **Data**: Market data files in `data/raw/mi_market_data.csv` (candidates) and `data/raw/members.csv` (members).
+- **Data**: Market data files in `data/raw/mi_market_data.csv` (candidates) and `data/raw/MedicareSampleCensus2023Q4.csv` (members).
+- **Thresholds**: Nested JSON format `{"state": {"county": {"specialty": threshold_miles}}}`. Specialties and counties are case-insensitive. Example: `{"mi": {"wayne": {"general practice": 20.0, "cardiology": 10.0}}}`.
 - **Interactive Dev**: `notebooks/react_agent.ipynb`.
 
 ## Key Logic & Patterns

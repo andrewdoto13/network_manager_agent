@@ -1,6 +1,5 @@
 """Tests for network_manager_agent."""
 
-import pandas as pd
 import pytest
 
 from network_manager_agent.data import load_candidates, load_members, load_data
@@ -12,7 +11,6 @@ from network_manager_agent.tools import (
     simulate_network_change,
     _filter_by_service_area,
     precompute_entity_summaries,
-    precompute_schema_profile,
     get_candidate_schema_profile,
 )
 
@@ -233,8 +231,8 @@ class TestTools:
 
     def test_get_network_status_with_providers(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "wayne", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital"},
@@ -242,7 +240,7 @@ class TestTools:
         result = get_network_status.invoke({
             "members": members,
             "network": network,
-            "county_specialty_thresholds": {"wayne": {"hospital": 20.0}},
+            "county_specialty_thresholds": {"mi": {"wayne": {"hospital": 20.0}}},
             "candidates": network,
         })
         assert result["total_providers"] == 1
@@ -262,8 +260,8 @@ class TestSimulateNetworkChange:
 
     def test_simulate_add_entity(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "wayne", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
@@ -288,7 +286,7 @@ class TestSimulateNetworkChange:
 
     def test_simulate_remove_entity(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
@@ -308,7 +306,7 @@ class TestSimulateNetworkChange:
 
     def test_simulate_add_and_remove(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
@@ -384,8 +382,8 @@ class TestSimulateNetworkChange:
 
     def test_simulate_delta_has_correct_counties(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "oakland"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "oakland", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
@@ -400,7 +398,7 @@ class TestSimulateNetworkChange:
             "candidates": candidates,
             "network": network,
             "members": members,
-            "county_specialty_thresholds": {"wayne": {"hospital": 20.0}, "oakland": {"hospital": 20.0}},
+            "county_specialty_thresholds": {"mi": {"wayne": {"hospital": 20.0}, "oakland": {"hospital": 20.0}}},
         })
         delta_counties = {d["county"] for d in result["delta"]}
         delta_specialties = {d["specialty"] for d in result["delta"]}
@@ -412,8 +410,8 @@ class TestSimulateNetworkChange:
 
     def test_compare_scenarios_basic(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "wayne", "state": "mi"},
         ]
         network = []
         candidates = [
@@ -443,7 +441,7 @@ class TestSimulateNetworkChange:
 
     def test_compare_scenarios_with_removals(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
@@ -504,7 +502,7 @@ class TestSimulateNetworkChange:
 
     def test_compare_scenarios_empty_falls_back(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
         ]
         network = []
         candidates = [
@@ -525,9 +523,9 @@ class TestSimulateNetworkChange:
 
     def test_get_network_status_per_county_specialty(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
-            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "wayne"},
-            {"id": 3, "lat": 42.5, "lon": -83.6, "county": "oakland"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
+            {"id": 2, "lat": 42.4, "lon": -83.3, "county": "wayne", "state": "mi"},
+            {"id": 3, "lat": 42.5, "lon": -83.6, "county": "oakland", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital"},
@@ -537,20 +535,20 @@ class TestSimulateNetworkChange:
         result = get_network_status.invoke({
             "members": members,
             "network": network,
-            "county_specialty_thresholds": {"wayne": {"hospital": 20.0, "cardiologist": 20.0}, "oakland": {"hospital": 20.0}},
+            "county_specialty_thresholds": {"mi": {"wayne": {"hospital": 20.0, "cardiologist": 20.0}, "oakland": {"hospital": 20.0}}},
             "candidates": candidates,
         })
         assert result["total_providers"] == 2
         coverage = result["member_coverage"]
         assert len(coverage) == 3
-        coverage_map = {(c["county"], c["specialty"]): c for c in coverage}
-        assert ("wayne", "hospital") in coverage_map
-        assert ("wayne", "cardiologist") in coverage_map
-        assert ("oakland", "hospital") in coverage_map
+        coverage_map = {(c.get("state", ""), c["county"], c["specialty"]): c for c in coverage}
+        assert ("mi", "wayne", "hospital") in coverage_map
+        assert ("mi", "wayne", "cardiologist") in coverage_map
+        assert ("mi", "oakland", "hospital") in coverage_map
 
     def test_get_network_status_validation_errors(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital"},
@@ -559,7 +557,7 @@ class TestSimulateNetworkChange:
         result = get_network_status.invoke({
             "members": members,
             "network": network,
-            "county_specialty_thresholds": {"wayne": {"hospital": 20.0, "neurologist": 10.0}},
+            "county_specialty_thresholds": {"mi": {"wayne": {"hospital": 20.0, "neurologist": 10.0}}},
             "candidates": candidates,
         })
         assert "validation_errors" in result
@@ -568,7 +566,7 @@ class TestSimulateNetworkChange:
 
     def test_simulate_network_change_validation_errors(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital", "entity": "Entity A"},
@@ -583,14 +581,14 @@ class TestSimulateNetworkChange:
             "candidates": candidates,
             "network": network,
             "members": members,
-            "county_specialty_thresholds": {"wayne": {"hospital": 20.0, "psychiatrist": 15.0}},
+            "county_specialty_thresholds": {"mi": {"wayne": {"hospital": 20.0, "psychiatrist": 15.0}}},
         })
         assert "validation_errors" in result
         assert any("psychiatrist" in e for e in result["validation_errors"])
 
     def test_compute_coverage_no_specialty_in_candidates(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49},
@@ -599,7 +597,7 @@ class TestSimulateNetworkChange:
         result = get_network_status.invoke({
             "members": members,
             "network": network,
-            "county_specialty_thresholds": {"wayne": {"hospital": 20.0}},
+            "county_specialty_thresholds": {"mi": {"wayne": {"hospital": 20.0}}},
             "candidates": candidates,
         })
         assert result["total_providers"] == 1
@@ -608,7 +606,7 @@ class TestSimulateNetworkChange:
 
     def test_compute_coverage_zero_coverage_when_no_network_providers(self):
         members = [
-            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne"},
+            {"id": 1, "lat": 42.3, "lon": -83.5, "county": "wayne", "state": "mi"},
         ]
         network = [
             {"id": 1, "lat": 42.32, "lon": -83.49, "specialty": "hospital"},
@@ -617,7 +615,7 @@ class TestSimulateNetworkChange:
         result = get_network_status.invoke({
             "members": members,
             "network": network,
-            "county_specialty_thresholds": {"wayne": {"cardiologist": 20.0}},
+            "county_specialty_thresholds": {"mi": {"wayne": {"cardiologist": 20.0}}},
             "candidates": candidates,
         })
         assert len(result["member_coverage"]) == 1
@@ -633,8 +631,8 @@ class TestServiceAreaFiltering:
             {"id": 1, "lat": 42.0, "lon": -83.0, "entity": "A"},
             {"id": 2, "lat": 45.0, "lon": -90.0, "entity": "B"},
         ]
-        members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
-        result = _filter_by_service_area(candidates, members, {})
+        members = [{"id": 1, "lat": 42.3, "lon": -83.5, "state": "mi", "county": "wayne"}]
+        result, _ = _filter_by_service_area(candidates, members, {})
         assert len(result) == 2
 
     def test_entity_retained_when_one_provider_in_bounds(self):
@@ -643,9 +641,9 @@ class TestServiceAreaFiltering:
             {"id": 2, "lat": 47.0, "lon": -85.0, "entity": "Entity A"},
             {"id": 3, "lat": 45.0, "lon": -90.0, "entity": "Entity B"},
         ]
-        members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
-        thresholds = {"wayne": {"hospital": 10.0}}
-        result = _filter_by_service_area(candidates, members, thresholds)
+        members = [{"id": 1, "lat": 42.3, "lon": -83.5, "state": "mi", "county": "wayne"}]
+        thresholds = {"mi": {"wayne": {"hospital": 10.0}}}
+        result, _ = _filter_by_service_area(candidates, members, thresholds)
         result_ids = {r["id"] for r in result}
         assert 1 in result_ids
         assert 2 in result_ids
@@ -656,18 +654,18 @@ class TestServiceAreaFiltering:
             {"id": 1, "lat": 47.0, "lon": -85.0, "entity": "Entity A"},
             {"id": 2, "lat": 48.0, "lon": -86.0, "entity": "Entity A"},
         ]
-        members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
-        thresholds = {"wayne": {"hospital": 10.0}}
-        result = _filter_by_service_area(candidates, members, thresholds)
+        members = [{"id": 1, "lat": 42.3, "lon": -83.5, "state": "mi", "county": "wayne"}]
+        thresholds = {"mi": {"wayne": {"hospital": 10.0}}}
+        result, _ = _filter_by_service_area(candidates, members, thresholds)
         assert len(result) == 0
 
     def test_empty_candidates_returns_empty(self):
-        result = _filter_by_service_area([], [{"id": 1, "lat": 42.3, "lon": -83.5}], {"wayne": {"hospital": 10.0}})
+        result, _ = _filter_by_service_area([], [{"id": 1, "lat": 42.3, "lon": -83.5, "state": "mi", "county": "wayne"}], {"mi": {"wayne": {"hospital": 10.0}}})
         assert result == []
 
     def test_empty_members_returns_all(self):
         candidates = [{"id": 1, "lat": 42.0, "lon": -83.0, "entity": "A"}]
-        result = _filter_by_service_area(candidates, [], {"wayne": {"hospital": 10.0}})
+        result, _ = _filter_by_service_area(candidates, [], {"mi": {"wayne": {"hospital": 10.0}}})
         assert len(result) == 1
         assert result[0]["id"] == 1
         assert result[0]["entity"] == "A"
@@ -677,16 +675,16 @@ class TestServiceAreaFiltering:
             {"id": 1, "Latitude": 42300000, "Longitude": 83500000, "entity": "Entity A"},
             {"id": 2, "Latitude": 47000000, "Longitude": 85000000, "entity": "Entity B"},
         ]
-        members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
-        thresholds = {"wayne": {"hospital": 10.0}}
-        result = _filter_by_service_area(candidates, members, thresholds)
+        members = [{"id": 1, "lat": 42.3, "lon": -83.5, "state": "mi", "county": "wayne"}]
+        thresholds = {"mi": {"wayne": {"hospital": 10.0}}}
+        result, _ = _filter_by_service_area(candidates, members, thresholds)
         result_ids = {r["id"] for r in result}
         assert 1 in result_ids
         assert 2 not in result_ids
 
 
 class TestPrecomputeFunctions:
-    """Tests for precompute_entity_summaries and precompute_schema_profile."""
+    """Tests for precompute_entity_summaries and get_candidate_schema_profile."""
 
     def test_precompute_entity_summaries_basic(self):
         candidates = [
@@ -704,21 +702,6 @@ class TestPrecomputeFunctions:
     def test_precompute_entity_summaries_empty(self):
         assert precompute_entity_summaries([]) == []
 
-    def test_precompute_schema_profile_basic(self):
-        candidates = [
-            {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
-            {"id": 2, "specialty": "clinic", "lat": 42.1, "lon": -83.1, "effectiveness": 3, "entity": "Entity B"},
-        ]
-        summaries = precompute_entity_summaries(candidates)
-        profile = precompute_schema_profile(summaries)
-        assert isinstance(profile, str)
-        assert "avg_effectiveness" in profile
-        assert "provider_count" in profile
-
-    def test_precompute_schema_profile_empty(self):
-        profile = precompute_schema_profile([])
-        assert profile == "No schema available."
-
     def test_get_candidate_schema_profile_with_summaries(self):
         candidates = [
             {"id": 1, "specialty": "hospital", "lat": 42.0, "lon": -83.0, "effectiveness": 5, "entity": "Entity A"},
@@ -727,6 +710,7 @@ class TestPrecomputeFunctions:
         profile = get_candidate_schema_profile(entity_summaries=summaries)
         assert isinstance(profile, dict)
         assert "avg_effectiveness" in profile
+        assert "provider_count" in profile
 
     def test_get_candidate_schema_profile_fallback_candidates(self):
         candidates = [
@@ -775,12 +759,12 @@ class TestCachedAggregation:
             {"id": 2, "lat": 42.4, "lon": -83.4, "specialty": "hospital", "effectiveness": 3, "entity": "Entity A"},
             {"id": 3, "lat": 47.0, "lon": -85.0, "specialty": "hospital", "effectiveness": 4, "entity": "Entity B"},
         ]
-        members = [{"id": 1, "lat": 42.3, "lon": -83.5}]
-        thresholds = {"wayne": {"hospital": 10.0}}
+        members = [{"id": 1, "lat": 42.3, "lon": -83.5, "state": "mi", "county": "wayne"}]
+        thresholds = {"mi": {"wayne": {"hospital": 10.0}}}
 
-        filtered = _filter_by_service_area(candidates, members, thresholds)
+        filtered, _ = _filter_by_service_area(candidates, members, thresholds)
         summaries = precompute_entity_summaries(filtered)
-        profile = precompute_schema_profile(summaries)
+        profile = get_candidate_schema_profile(candidates=filtered)
 
         assert len(filtered) == 2
         assert len(summaries) == 1

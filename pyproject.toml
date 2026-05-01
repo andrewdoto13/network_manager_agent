@@ -29,7 +29,6 @@ dev = [
 
 [project.scripts]
 run-agent = "network_manager_agent.main:main"
-generate-data = "scripts.generate_data:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

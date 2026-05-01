@@ -7,7 +7,7 @@ from .graph import build_agent
 from .tools import (
     _filter_by_service_area,
     precompute_entity_summaries,
-    precompute_schema_profile,
+    get_candidate_schema_profile,
 )
 
 __version__ = "0.1.0"
@@ -22,5 +22,5 @@ __all__ = [
     "create_llm",
     "_filter_by_service_area",
     "precompute_entity_summaries",
-    "precompute_schema_profile",
+    "get_candidate_schema_profile",
 ]
