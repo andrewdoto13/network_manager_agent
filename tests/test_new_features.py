@@ -140,6 +140,7 @@ class TestGetCandidatesExpanded:
         result_included = get_candidates.invoke({
             "specialties": ["hospital"],
             "include_not_in_network": False,
+            "limit": 100,
             "candidates": mock_candidates,
             "network": network,
             "entity_summaries": precompute_entity_summaries(mock_candidates),
@@ -206,6 +207,7 @@ class TestRunCodeTool:
             "candidates": [],
             "network": [],
             "members": [],
+            "county_specialty_thresholds": {},
         })
         assert isinstance(result, list)
         assert len(result) == 2
@@ -227,6 +229,7 @@ class TestRunCodeTool:
             "entity_summaries": [],
             "network": [],
             "members": [],
+            "county_specialty_thresholds": {},
         })
         assert isinstance(result, list)
         assert len(result) == 2
@@ -247,6 +250,7 @@ class TestRunCodeTool:
             "candidates": [],
             "network": [],
             "members": [],
+            "county_specialty_thresholds": {},
         })
         assert isinstance(result, list)
         assert len(result) == 2
@@ -266,6 +270,7 @@ class TestRunCodeTool:
             "entity_summaries": [],
             "network": [],
             "members": [],
+            "county_specialty_thresholds": {},
         })
         assert isinstance(result, list)
         assert len(result) == 2
@@ -282,6 +287,7 @@ class TestRunCodeTool:
             "candidates": [],
             "network": [],
             "members": [],
+            "county_specialty_thresholds": {},
         })
         assert "Error" in result or "NameError" in result
 
@@ -293,6 +299,7 @@ class TestRunCodeTool:
             "candidates": [],
             "network": [],
             "members": [],
+            "county_specialty_thresholds": {},
         })
         assert "Error" in result
 
@@ -305,6 +312,7 @@ class TestRunCodeTool:
             "candidates": [],
             "entity_summaries": [],
             "members": [],
+            "county_specialty_thresholds": {},
         })
         assert isinstance(result, list)
         assert len(result) == 1
@@ -319,6 +327,7 @@ class TestRunCodeTool:
             "candidates": [],
             "entity_summaries": [],
             "network": [],
+            "county_specialty_thresholds": {},
         })
         assert isinstance(result, list)
         assert len(result) == 1
@@ -332,6 +341,7 @@ class TestRunCodeTool:
             "candidates": [],
             "network": [],
             "members": [],
+            "county_specialty_thresholds": {},
         })
         assert isinstance(result, list)
         assert len(result) == 0
@@ -344,6 +354,7 @@ class TestRunCodeTool:
             "candidates": [],
             "network": [],
             "members": [],
+            "county_specialty_thresholds": {},
         })
         assert result == '{"key": "value"}'
 
@@ -355,8 +366,36 @@ class TestRunCodeTool:
             "candidates": [],
             "network": [],
             "members": [],
+            "county_specialty_thresholds": {},
         })
         assert result == 4.0
+
+    def test_run_code_coverage_simulation(self):
+        """Test that run_code can compute coverage using the helper."""
+        members = [{"id": 1, "county": "wayne", "lat": 42.33, "lon": -83.04}]
+        network = []
+        candidates = [
+            {"id": 1, "specialty": "hospital", "lat": 42.33, "lon": -83.04, "entity": "Entity A"},
+        ]
+        thresholds = {"mi": {"wayne": {"hospital": 1.0}}}
+        
+        # Simulate adding Entity A
+        code = """
+sim_net = pd.concat([network_df, candidates_df[candidates_df['entity'] == 'Entity A']])
+result, errs = compute_coverage(sim_net, members_df, thresholds, candidates_df)
+"""
+        result = run_code.invoke({
+            "code": code,
+            "members": members,
+            "network": network,
+            "candidates": candidates,
+            "entity_summaries": [],
+            "county_specialty_thresholds": thresholds,
+        })
+        
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["coverage_percentage"] == 100.0
 
 
 class TestRawCandidateSchemaProfile:

@@ -36,24 +36,16 @@ def _miles_to_radians(threshold_miles: float, earth_radius_miles: float = 3958.8
 # Coverage computation
 # ---------------------------------------------------------------------------
 
-def _compute_coverage(
-    network: list[dict],
-    members: list[dict],
+def compute_coverage_df(
+    network_df: pd.DataFrame,
+    members_df: pd.DataFrame,
     county_specialty_thresholds: dict[str, dict[str, dict[str, float]]],
-    candidates: list[dict] = None,
+    candidates_df: pd.DataFrame = None,
 ) -> tuple[list[dict], list[str]]:
-    """Compute per-county-and-specialty member coverage given a network and member set.
-
-    Members are expected to already be scoped to the service area.
+    """Compute per-county-and-specialty member coverage given DataFrames.
+    
     Thresholds use nested structure: {"mi": {"wayne": {"general practice": 20.0}}}.
     """
-    try:
-        members_df = pd.DataFrame(members) if members else pd.DataFrame()
-        net_df = pd.DataFrame(network) if network else pd.DataFrame()
-        candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
-    except Exception as e:
-        return [], [f"Data preparation error: {str(e)}"]
-
     if members_df.empty:
         return [], []
 
@@ -63,7 +55,7 @@ def _compute_coverage(
     # Discover specialty column in candidates
     spec_col = None
     valid_specialties_lower = set()
-    if not candidates_df.empty:
+    if candidates_df is not None and not candidates_df.empty:
         spec_col = "specialty" if "specialty" in candidates_df.columns else None
         if spec_col:
             valid_specialties_lower = set(candidates_df[spec_col].dropna().str.lower().unique().tolist())
@@ -85,8 +77,8 @@ def _compute_coverage(
 
             for specialty, threshold in specialties.items():
                 # Filter network providers by specialty (case-insensitive)
-                if spec_col and "specialty" in net_df.columns:
-                    specialty_network = net_df[net_df[spec_col].str.lower() == specialty.lower()]
+                if spec_col and "specialty" in network_df.columns:
+                    specialty_network = network_df[network_df[spec_col].str.lower() == specialty.lower()]
                 else:
                     specialty_network = pd.DataFrame()
 
@@ -120,6 +112,27 @@ def _compute_coverage(
 
     coverage_results.sort(key=lambda x: (x.get("state", ""), x["county"], x["specialty"]))
     return coverage_results, validation_errors
+
+
+def _compute_coverage(
+    network: list[dict],
+    members: list[dict],
+    county_specialty_thresholds: dict[str, dict[str, dict[str, float]]],
+    candidates: list[dict] = None,
+) -> tuple[list[dict], list[str]]:
+    """Compute per-county-and-specialty member coverage given a network and member set.
+    
+    Members are expected to already be scoped to the service area.
+    Thresholds use nested structure: {"mi": {"wayne": {"general practice": 20.0}}}.
+    """
+    try:
+        members_df = pd.DataFrame(members) if members else pd.DataFrame()
+        net_df = pd.DataFrame(network) if network else pd.DataFrame()
+        candidates_df = pd.DataFrame(candidates) if candidates else pd.DataFrame()
+    except Exception as e:
+        return [], [f"Data preparation error: {str(e)}"]
+
+    return compute_coverage_df(net_df, members_df, county_specialty_thresholds, candidates_df)
 
 
 def _filter_by_service_area(
@@ -1014,22 +1027,27 @@ def run_code(
     entity_summaries: Annotated[list[dict], InjectedState("entity_summaries")],
     network: Annotated[list[dict], InjectedState("network")],
     members: Annotated[list[dict], InjectedState("members")],
+    county_specialty_thresholds: Annotated[dict, InjectedState("county_specialty_thresholds")],
 ) -> str:
-    """Execute Python/pandas code to filter or analyze candidate data.
+    """Execute Python/pandas code to filter, analyze, or simulate network changes.
 
     The following variables are available in the sandbox:
     - candidates_df: Raw provider-level candidate data (DataFrame)
     - entity_summaries_df: Pre-aggregated entity summaries (DataFrame)
     - network_df: Currently contracted providers (DataFrame)
     - members_df: Member locations (DataFrame)
+    - thresholds: Service area configuration (dict)
+    - compute_coverage: Helper function to calculate coverage. 
+      Usage: compute_coverage(network_df, members_df, thresholds, candidates_df)
+      Returns: (coverage_results, validation_errors)
 
     Assign your result to 'result'. Returns as JSON.
-    Allowed: pandas, numpy, json, math, functools, itertools, collections.
+    Allowed: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree.
     Timeout: 20 seconds.
 
-    Examples:
-      result = candidates_df[candidates_df['effectiveness'] > 3.5]
-      result = entity_summaries_df.sort_values('avg_effectiveness', ascending=False).head(5)[['entity', 'avg_effectiveness']]
+    Example (Simulation):
+      sim_net = pd.concat([network_df, candidates_df[candidates_df['entity'] == 'Covenant']])
+      result, errs = compute_coverage(sim_net, members_df, thresholds, candidates_df)
     """
     sandbox_globals = {
         "__builtins__": {},
@@ -1044,6 +1062,8 @@ def run_code(
         "entity_summaries_df": pd.DataFrame(entity_summaries) if entity_summaries else pd.DataFrame(),
         "network_df": pd.DataFrame(network) if network else pd.DataFrame(),
         "members_df": pd.DataFrame(members) if members else pd.DataFrame(),
+        "thresholds": county_specialty_thresholds,
+        "compute_coverage": compute_coverage_df,
     }
 
     # Use threading-based timeout since signal.alarm doesn't work in non-main threads
@@ -1086,4 +1106,4 @@ def run_code(
 # Tool collection
 # ---------------------------------------------------------------------------
 
-TOOLS = [add_contract_entity, get_network_status, simulate_network_change, run_code]
+TOOLS = [add_contract_entity, get_network_status, run_code]

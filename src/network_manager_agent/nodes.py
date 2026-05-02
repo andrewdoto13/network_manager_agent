@@ -99,17 +99,18 @@ RULES
 5. If required information is missing, ask the user for clarification instead of guessing.
 6. You MUST always write a response in your final message. Never return an empty response.
    Always summarize what was accomplished when the task is complete.
-7. When choosing between entities, use simulate_network_change with compare_scenarios
-   to evaluate all options in a single call.
+7. When evaluating potential network changes, use the run_code tool to simulate the impact on member coverage.
+   Create a temporary network DataFrame (e.g., by concatenating existing network with new candidates)
+   and call compute_coverage(sim_net, members_df, thresholds, candidates_df) to assess the coverage delta.
 8. Be decisive. After gathering sufficient data, present your findings.
    Do not repeat the same reasoning or simulations.
 9. If the user asks for recommendations, analysis, or evaluation — present your findings
    and stop. You may suggest entities or ask if the user wants to proceed, but do NOT
    call add_contract_entity in the same response.
-10. You have a `run_code` tool that executes pandas code. Use it for filtering and analyzing
-    candidate data. Variables available: candidates_df, entity_summaries_df, network_df, members_df.
-    Assign your result to 'result'. Timeout is 20 seconds.
-    Allowed modules: pandas, numpy, json, math, functools, itertools, collections.
+10. You have a `run_code` tool that executes pandas code for Discovery and Validation.
+    Variables available: candidates_df, entity_summaries_df, network_df, members_df, thresholds,
+    and a compute_coverage helper. Assign your result to 'result'. Timeout is 20 seconds.
+    Allowed modules: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree.
 11. Use the raw provider-level columns above to write effective run_code queries.
     For example, filter by location_confidence, new_patient_claims, or effectiveness at the
     provider level, then groupby('entity') to get entity-level results.
@@ -136,7 +137,7 @@ RULES
                 HumanMessage(content=anchor),
             ] + messages_history
 
-    tools_list = [add_contract_entity, get_network_status, simulate_network_change, run_code]
+    tools_list = TOOLS
     response = llm.bind_tools(tools_list).invoke(messages)
 
     return {
