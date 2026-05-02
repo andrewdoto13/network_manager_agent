@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 
 from langchain_openai import ChatOpenAI
 
+from langgraph.checkpoint.memory import MemorySaver
+
 from network_manager_agent.graph import build_agent
 
 
@@ -34,6 +36,7 @@ class TestBuildAgent:
 
     def test_has_checkpointer(self):
         llm = _make_mock_llm()
-        agent = build_agent(llm)
+        checkpointer = MemorySaver()
+        agent = build_agent(llm, checkpointer=checkpointer)
         # The compiled agent should have a checkpointer configured
         assert agent.checkpointer is not None

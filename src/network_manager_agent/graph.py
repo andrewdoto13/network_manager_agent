@@ -3,7 +3,7 @@
 from langchain_openai import ChatOpenAI
 from langgraph.graph import START, StateGraph
 from langgraph.prebuilt import tools_condition
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .state import AgentState
 from .nodes import (
@@ -15,11 +15,12 @@ from .nodes import (
 )
 
 
-def build_agent(llm: ChatOpenAI):
+def build_agent(llm: ChatOpenAI, checkpointer=None):
     """Build and compile the network management agent graph.
 
     Args:
         llm: Configured ChatOpenAI instance.
+        checkpointer: Optional checkpointer for state persistence.
 
     Returns:
         Compiled LangGraph agent ready for execution.
@@ -52,7 +53,6 @@ def build_agent(llm: ChatOpenAI):
     builder.add_edge("tools", "update_state")
     builder.add_edge("summarize_messages", "network_manager")
 
-    memory = MemorySaver()
-    agent = builder.compile(checkpointer=memory)
+    agent = builder.compile(checkpointer=checkpointer)
 
     return agent

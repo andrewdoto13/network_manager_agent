@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from .tools import (
 )
 from .graph import build_agent
 from .ui import run_agent
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 
 def run_agent_session(agent, prompt, candidates, members, thresholds, summaries, profile, thread_config):
@@ -75,8 +77,68 @@ def main():
         default=None,
         help="JSON string mapping state->county->specialty->threshold (e.g. '{\"mi\": {\"wayne\": {\"general practice\": 20.0, \"cardiology\": 10.0}}'). Default threshold is 20.0 miles.",
     )
+    parser.add_argument(
+        "--thread-id",
+        type=str,
+        default="1",
+        help="The ID of the conversation thread to load/create. Defaults to '1'.",
+    )
+    parser.add_argument(
+        "--list-threads",
+        action="store_true",
+        help="List all unique threads in the persistence database.",
+    )
+    parser.add_argument(
+        "--clear-thread",
+        type=str,
+        metavar="THREAD_ID",
+        help="Delete all checkpoints for the specified thread ID.",
+    )
+    parser.add_argument(
+        "--clear-all",
+        action="store_true",
+        help="Wipe the entire persistence database.",
+    )
 
     args = parser.parse_args()
+
+    db_path = "checkpoints.sqlite"
+
+    # Handle management commands before loading data/agent
+    if args.clear_all:
+        import os
+        if os.path.exists(db_path):
+            os.remove(db_path)
+            print(f"Wiped persistence database: {db_path}")
+        sys.exit(0)
+
+    if args.list_threads:
+        if not Path(db_path).exists():
+            print("No persistence database found.")
+            sys.exit(0)
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT thread_id FROM checkpoints")
+            threads = cursor.fetchall()
+            if threads:
+                print("Available Threads:")
+                for t in threads:
+                    print(f" - {t[0]}")
+            else:
+                print("No threads found in database.")
+        sys.exit(0)
+
+    if args.clear_thread:
+        if not Path(db_path).exists():
+            print("No persistence database found.")
+            sys.exit(0)
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (args.clear_thread,))
+            cursor.execute("DELETE FROM writes WHERE thread_id = ?", (args.clear_thread,))
+            conn.commit()
+            print(f"Cleared all state for thread: {args.clear_thread}")
+        sys.exit(0)
 
     # Create LLM
     config = LLMConfig()
@@ -117,34 +179,35 @@ def main():
     )
 
     # Build agent
-    agent = build_agent(llm)
+    with SqliteSaver.from_conn_string("checkpoints.sqlite") as checkpointer:
+        agent = build_agent(llm, checkpointer=checkpointer)
 
-    # Create thread config
-    thread_config = {"configurable": {"thread_id": "1"}}
+        # Create thread config
+        thread_config = {"configurable": {"thread_id": args.thread_id}}
 
-    if args.prompt:
-        prompt = args.prompt
-    else:
-        print("Network Management Agent")
-        print("Enter your prompt (or 'quit' to exit):")
-        prompt = input("> ").strip()
-        while prompt.lower() not in ("quit", "exit", "q"):
-                if prompt:
-                    run_agent_session(
-                        agent, prompt, filtered_candidates, filtered_members, 
-                        county_specialty_thresholds, entity_summaries, 
-                        schema_profile, thread_config
-                    )
- 
- 
-                    prompt = input("\n> ").strip()
+        if args.prompt:
+            prompt = args.prompt
+        else:
+            print("Network Management Agent")
+            print("Enter your prompt (or 'quit' to exit):")
+            prompt = input("> ").strip()
+            while prompt.lower() not in ("quit", "exit", "q"):
+                    if prompt:
+                        run_agent_session(
+                            agent, prompt, filtered_candidates, filtered_members, 
+                            county_specialty_thresholds, entity_summaries, 
+                            schema_profile, thread_config
+                        )
+            
+            
+                        prompt = input("\n> ").strip()
 
-    if args.prompt:
-        run_agent_session(
-            agent, args.prompt, filtered_candidates, filtered_members, 
-            county_specialty_thresholds, entity_summaries, 
-            schema_profile, thread_config
-        )
+        if args.prompt:
+            run_agent_session(
+                agent, args.prompt, filtered_candidates, filtered_members, 
+                county_specialty_thresholds, entity_summaries, 
+                schema_profile, thread_config
+            )
 
 
     print("Goodbye!")
