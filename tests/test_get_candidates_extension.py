@@ -24,9 +24,10 @@ def test_get_candidates_multi_specialty(mock_candidates, mock_network):
         "network": mock_network,
         "entity_summaries": entity_summaries,
     })
-    assert isinstance(result, list)
+    assert isinstance(result, dict)
+    assert "entities" in result
     # Should find entities from both
-    entity_ids = {e["entity_id"] for e in result}
+    entity_ids = {e["entity_id"] for e in result["entities"]}
     assert "Entity A" in entity_ids
     assert "Entity B" in entity_ids
     assert "Entity D" in entity_ids
@@ -42,9 +43,9 @@ def test_get_candidates_weighted_metrics(mock_candidates, mock_network):
         "ascending": False
     })
     
-    assert result[0]["entity_id"] == "Entity A"
-    assert result[1]["entity_id"] == "Entity E"
-    assert result[2]["entity_id"] == "Entity C"
+    assert result["entities"][0]["entity_id"] == "Entity A"
+    assert result["entities"][1]["entity_id"] == "Entity E"
+    assert result["entities"][2]["entity_id"] == "Entity C"
 
 def test_get_candidates_weighted_metrics_mixed(mock_candidates, mock_network):
     entity_summaries = precompute_entity_summaries(mock_candidates)
@@ -57,9 +58,9 @@ def test_get_candidates_weighted_metrics_mixed(mock_candidates, mock_network):
         "ascending": False
     })
     
-    assert result[0]["entity_id"] == "Entity A"
-    assert result[1]["entity_id"] == "Entity E"
-    assert result[2]["entity_id"] == "Entity C"
+    assert result["entities"][0]["entity_id"] == "Entity A"
+    assert result["entities"][1]["entity_id"] == "Entity E"
+    assert result["entities"][2]["entity_id"] == "Entity C"
 
 def test_get_candidates_limit(mock_candidates, mock_network):
     entity_summaries = precompute_entity_summaries(mock_candidates)
@@ -70,7 +71,7 @@ def test_get_candidates_limit(mock_candidates, mock_network):
         "entity_summaries": entity_summaries,
         "limit": 2
     })
-    assert len(result) == 2
+    assert len(result["entities"]) == 2
 
 def test_get_candidates_no_specialties(mock_candidates, mock_network):
     entity_summaries = precompute_entity_summaries(mock_candidates)
@@ -79,4 +80,7 @@ def test_get_candidates_no_specialties(mock_candidates, mock_network):
         "network": mock_network,
         "entity_summaries": entity_summaries,
     })
-    assert result == "No specialties provided."
+    assert isinstance(result, dict)
+    assert "available_specialties" in result
+    assert "hospital" in result["available_specialties"]
+    assert "clinic" in result["available_specialties"]

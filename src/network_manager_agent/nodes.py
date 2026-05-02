@@ -15,11 +15,12 @@ from langchain_openai import ChatOpenAI
 from .config import SUMMARIZE_THRESHOLD, MESSAGES_TO_ARCHIVE
 from .state import AgentState
 from .tools import (
-    get_candidates,
     get_candidate_schema_profile,
+    get_raw_candidate_schema_profile,
     add_contract_entity,
     get_network_status,
     simulate_network_change,
+    run_code,
     TOOLS,
 )
 
@@ -58,6 +59,20 @@ def network_manager(state: AgentState, llm: ChatOpenAI):
         else:
             schema_section = "No schema available."
 
+    # Build concise raw candidate schema for run_code tool
+    candidates = state.get("candidates", [])
+    raw_schema = get_raw_candidate_schema_profile(candidates)
+    # Only include column names and types, not full distributions
+    raw_schema_section = ""
+    if raw_schema:
+        for col, info in raw_schema.items():
+            col_type = info.get("type", "unknown")
+            unique_count = info.get("unique_count", "")
+            if unique_count:
+                raw_schema_section += f"- {col}: {col_type} (unique_count={unique_count})\n"
+            else:
+                raw_schema_section += f"- {col}: {col_type}\n"
+
     system_message_content = f'''
 You are an assistant responsible for managing a healthcare provider network.
 You MUST use the available tools to update the network state.
@@ -67,29 +82,38 @@ You are evaluating member coverage for these county-specialty combinations:
 {scope_section}
 
 CANDIDATE DATA SCHEMA
-The following is the statistical profile of the available candidate entities:
+Entity summaries (aggregated):
 {schema_section}
+
+Raw provider-level columns:
+{raw_schema_section}
 
 Follow all rules below exactly.
 
 RULES
 ---------------
-1. You may ONLY call add_contract_entity with valid entity IDs that appear in get_candidates result.
+1. You may ONLY call add_contract_entity with valid entity IDs that you discover through your analysis.
 2. Never invent entities, providers, specialties, counts, or network state. Use ONLY the data returned by tools.
-3. If get_candidates returns an empty list, that means no entities remain for that specialty.
-   Do NOT retry unless the user explicitly requests it.
-4. The get_network_status function is THE source of truth for the network.
-5. Factor in the user's stated preferences when deciding whether to call tools.
-6. If required information is missing, ask the user for clarification instead of guessing.
-7. You MUST always write a response in your final message. Never return an empty response.
+3. The get_network_status function is THE source of truth for the network.
+4. Factor in the user's stated preferences when deciding whether to call tools.
+5. If required information is missing, ask the user for clarification instead of guessing.
+6. You MUST always write a response in your final message. Never return an empty response.
    Always summarize what was accomplished when the task is complete.
-8. When choosing between entities, use simulate_network_change with compare_scenarios
+7. When choosing between entities, use simulate_network_change with compare_scenarios
    to evaluate all options in a single call.
- 9. Be decisive. After gathering sufficient data, present your findings.
-    Do not repeat the same reasoning or simulations.
- 10. If the user asks for recommendations, analysis, or evaluation — present your findings
-    and stop. You may suggest entities or ask if the user wants to proceed, but do NOT
-    call add_contract_entity in the same response.
+8. Be decisive. After gathering sufficient data, present your findings.
+   Do not repeat the same reasoning or simulations.
+9. If the user asks for recommendations, analysis, or evaluation — present your findings
+   and stop. You may suggest entities or ask if the user wants to proceed, but do NOT
+   call add_contract_entity in the same response.
+10. You have a `run_code` tool that executes pandas code. Use it for filtering and analyzing
+    candidate data. Variables available: candidates_df, entity_summaries_df, network_df, members_df.
+    Assign your result to 'result'. Timeout is 20 seconds.
+    Allowed modules: pandas, numpy, json, math, functools, itertools, collections.
+11. Use the raw provider-level columns above to write effective run_code queries.
+    For example, filter by location_confidence, new_patient_claims, or effectiveness at the
+    provider level, then groupby('entity') to get entity-level results.
+12. Use the entity summaries schema for quick entity-level queries.
 '''
 
     messages_history = state.get("messages", [])
@@ -112,7 +136,7 @@ RULES
                 HumanMessage(content=anchor),
             ] + messages_history
 
-    tools_list = [get_candidates, add_contract_entity, get_network_status, simulate_network_change]
+    tools_list = [add_contract_entity, get_network_status, simulate_network_change, run_code]
     response = llm.bind_tools(tools_list).invoke(messages)
 
     return {

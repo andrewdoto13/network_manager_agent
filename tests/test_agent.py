@@ -103,9 +103,11 @@ class TestTools:
             "network": [],
             "entity_summaries": entity_summaries,
         })
-        assert isinstance(result, list)
-        assert len(result) <= 5
-        for e in result:
+        assert isinstance(result, dict)
+        assert "entities" in result
+        assert "pagination" in result
+        assert len(result["entities"]) <= 5
+        for e in result["entities"]:
             assert "entity_id" in e
             assert "hospital" in e["capabilities"]["specialties"]
             # Verify new metrics
@@ -127,8 +129,8 @@ class TestTools:
             "entity_summaries": entity_summaries,
         })
         # Add first result to network (simulate adding one of the entities)
-        # result1 is a list of entity summaries
-        network_entity = result1[0]["entity_id"]
+        # result1 is a dict with "entities" key
+        network_entity = result1["entities"][0]["entity_id"]
         # To simulate the entity being in network, we add its providers
         network = [p for p in candidates if p["entity"] == network_entity]
 
@@ -139,8 +141,8 @@ class TestTools:
             "network": network,
             "entity_summaries": entity_summaries,
         })
-        if isinstance(result2, list):
-            result2_ids = {e["entity_id"] for e in result2}
+        if isinstance(result2, dict):
+            result2_ids = {e["entity_id"] for e in result2.get("entities", [])}
             assert network_entity not in result2_ids
 
     def test_get_candidates_returns_message_when_none_available(self):
@@ -152,8 +154,9 @@ class TestTools:
             "network": [candidates[0]],
             "entity_summaries": entity_summaries,
         })
-        assert isinstance(result, str)
-        assert "No available entities" in result
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert "No available entities" in result["error"]
 
     def test_add_contract_entity(self):
         candidates = [
@@ -736,8 +739,9 @@ class TestCachedAggregation:
             "network": [],
             "entity_summaries": entity_summaries,
         })
-        assert isinstance(result, list)
-        assert len(result) == 2
+        assert isinstance(result, dict)
+        assert "entities" in result
+        assert len(result["entities"]) == 2
 
     def test_get_candidates_fallback_without_summaries(self):
         candidates = [
@@ -750,8 +754,9 @@ class TestCachedAggregation:
             "network": [],
             "entity_summaries": [],
         })
-        assert isinstance(result, list)
-        assert len(result) == 2
+        assert isinstance(result, dict)
+        assert "entities" in result
+        assert len(result["entities"]) == 2
 
     def test_full_pipeline_filter_then_aggregate(self):
         candidates = [
@@ -800,8 +805,9 @@ class TestCachedAggregation:
             "sort_by": "total_claims_amount",
             "ascending": False,
         })
-        assert isinstance(result, list)
-        assert result[0]["entity_id"] == "Entity B"
-        assert result[1]["entity_id"] == "Entity A"
-        assert result[0]["metrics"]["total_claims"] == 500.0
-        assert result[1]["metrics"]["total_claims"] == 300.0
+        assert isinstance(result, dict)
+        assert "entities" in result
+        assert result["entities"][0]["entity_id"] == "Entity B"
+        assert result["entities"][1]["entity_id"] == "Entity A"
+        assert result["entities"][0]["metrics"]["total_claims"] == 500.0
+        assert result["entities"][1]["metrics"]["total_claims"] == 300.0

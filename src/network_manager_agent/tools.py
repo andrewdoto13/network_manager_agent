@@ -1,6 +1,11 @@
 """Tool definitions for the network management agent."""
 
 import json
+import math
+import signal
+import functools
+import itertools
+from collections import defaultdict
 from typing import Any
 
 import numpy as np
@@ -424,6 +429,84 @@ def get_candidate_schema_profile(
     return _build_schema_profile_from_summaries(entity_df)
 
 
+def get_raw_candidate_schema_profile(candidates: list[dict]) -> dict:
+    """Build a statistical profile of raw provider-level candidate data.
+
+    Same format as _build_schema_profile_from_summaries but for provider-level columns.
+    Returns dict with column names as keys and statistical profiles as values.
+    Does not exclude the 'entity' column since raw data needs it for grouping.
+    Limits unique_values to first 20 to keep schema size manageable.
+    """
+    if not candidates:
+        return {}
+    df = pd.DataFrame(candidates)
+    profile = {}
+    
+    # Don't exclude 'entity' for raw data - agent needs it for groupby
+    cols_to_profile = [col for col in df.columns if col not in {"entity_id"}]
+    
+    for col in cols_to_profile:
+        dtype = str(df[col].dtype)
+        col_profile = {"type": dtype}
+
+        if pd.api.types.is_numeric_dtype(df[col]):
+            col_profile.update({
+                "min": float(df[col].min()),
+                "max": float(df[col].max()),
+                "mean": float(round(df[col].mean(), 2)),
+                "q1": float(df[col].quantile(0.25)),
+                "median": float(df[col].median()),
+                "q3": float(df[col].quantile(0.75)),
+            })
+        elif pd.api.types.is_bool_dtype(df[col]):
+            counts = df[col].value_counts().to_dict()
+            col_profile["counts"] = {str(k): int(v) for k, v in counts.items()}
+        elif pd.api.types.is_datetime64_any_dtype(df[col]):
+            col_profile.update({
+                "min": str(df[col].min()),
+                "max": str(df[col].max()),
+                "samples": df[col].head(3).dt.strftime("%Y-%m-%d").tolist(),
+            })
+        else:
+            first_val = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
+            if isinstance(first_val, dict):
+                full_dist = {}
+                for val in df[col].dropna():
+                    if isinstance(val, dict):
+                        for k, v in val.items():
+                            full_dist[str(k)] = full_dist.get(str(k), 0) + v
+                col_profile.update({
+                    "type": "dict",
+                    "distribution": {k: int(v) for k, v in full_dist.items()},
+                    "num_keys": int(len(full_dist)),
+                })
+            elif pd.api.types.is_list_like(first_val):
+                all_vals = [item for sublist in df[col].dropna() for item in sublist]
+                unique_vals = sorted(list(set(all_vals)))
+                col_profile.update({
+                    "unique_count": int(len(unique_vals)),
+                    "unique_values": unique_vals[:20],  # Cap to first 20
+                    "distribution": {
+                        str(k): int(v)
+                        for k, v in pd.Series(all_vals).value_counts().head(5).to_dict().items()
+                    },
+                })
+            else:
+                unique_values = sorted(df[col].dropna().unique().tolist())
+                col_profile.update({
+                    "unique_count": int(len(unique_values)),
+                    "unique_values": unique_values[:20],  # Cap to first 20
+                    "distribution": {
+                        str(k): int(v)
+                        for k, v in df[col].value_counts().head(5).to_dict().items()
+                    },
+                })
+
+        profile[col] = col_profile
+
+    return profile
+
+
 # ---------------------------------------------------------------------------
 # LangGraph Tools
 # ---------------------------------------------------------------------------
@@ -437,18 +520,51 @@ def get_candidates(
     sort_by: str = "none",
     ascending: bool = True,
     limit: int = 5,
+    offset: int = 0,
     weighted_metrics: dict[str, float] = None,
+    search: str = None,
+    exclude_entity_ids: list[str] = None,
+    min_effectiveness: float = None,
+    min_provider_count: int = None,
+    max_geographic_reach: int = None,
+    include_not_in_network: bool = True,
 ):
-    """Return up to [limit] contract entities that have at least one provider with the requested specialties and are not yet in the network.
+    """Return contract entities matching the specified filters, not yet in the network.
 
-    - sort_by: IMPORTANT - sorts the ENTITIES based on their aggregated metrics (e.g., 'avg_effectiveness', 'provider_count', 'new_patient_rate', 'total_claims_amount', 'avg_total_claims_amount').
-      Use 'total_claims_amount' to rank by total entity claims volume. Use 'avg_effectiveness' with ascending=False.
-      To prioritize accessibility, use sort_by='new_patient_rate' with ascending=False.
-    - ascending: if True, sort lowest-first; if False, sort highest-first.
-    - weighted_metrics: A dictionary of {metric_name: weight} to create a custom balanced score.
+    This tool supports rich filtering and pagination to help the agent discover
+    the best entities for the network.
+
+    FILTERS:
+    - specialties: List of specialty names to filter by (case-insensitive, exact match).
+      Pass multiple specialties to get entities matching ANY of them.
+    - search: Free-text search that matches against entity names, specialties, and cities.
+      Use this to find entities by name fragment or to discover what's available.
+    - exclude_entity_ids: List of entity names to exclude from results (e.g., already considered).
+    - min_effectiveness: Minimum avg_effectiveness threshold (0-5 scale).
+    - min_provider_count: Minimum number of providers in the entity.
+    - max_geographic_reach: Maximum number of distinct cities the entity operates in.
+    - include_not_in_network: If True (default), exclude entities already in the network.
+      Set to False to see all entities including ones already contracted.
+
+    SORTING:
+    - sort_by: Sort entities by an aggregated metric. Options include:
+      'avg_effectiveness', 'avg_efficiency', 'provider_count', 'new_patient_rate',
+      'total_claims_amount', 'avg_total_claims_amount', 'total_medicare_claims_amount',
+      'geographic_reach'. Use 'none' to return in natural order.
+    - ascending: If True, sort lowest-first; if False, sort highest-first.
+    - weighted_metrics: A dictionary of {metric_name: weight} for a custom score.
       Example: {"avg_effectiveness": 0.7, "new_patient_rate": 0.3}.
-    - limit: The maximum number of entities to return.
-    Returns a message if no entities remain for the requested specialties.
+
+    PAGINATION:
+    - limit: Maximum number of entities to return (default 5, max 100).
+    - offset: Skip this many entities before starting to collect results.
+      Use with limit for pagination (e.g., offset=5, limit=5 for page 2).
+
+    SPECIALTY DISCOVERY:
+    - If specialties is None and search is None, returns a summary of available
+      specialties and entity counts instead of entities.
+
+    Returns {"entities": [...], "pagination": {...}} with entity summaries and metadata.
     """
     candidates = normalize_records(candidates) if candidates else []
     network = normalize_records(network) if network else []
@@ -456,35 +572,73 @@ def get_candidates(
     network_df = pd.DataFrame(network) if network else pd.DataFrame()
 
     if candidates_df.empty:
-        return "No available candidates."
+        return {"entities": [], "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0}}
 
-    if specialties is None:
-        return "No specialties provided."
-
-    target_specialties_lower = [s.lower() for s in specialties]
-
-    spec_col = "specialty" if "specialty" in candidates_df.columns else None
     entity_col = "entity" if "entity" in candidates_df.columns else None
+    spec_col = "specialty" if "specialty" in candidates_df.columns else None
+    city_col = "city" if "city" in candidates_df.columns else None
 
-    if spec_col is None:
-        return "No specialty column found in candidate data."
+    # --- Specialty discovery mode ---
+    if specialties is None and (search is None or search.strip() == ""):
+        if spec_col is None:
+            return {"entities": [], "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0}, "available_specialties": {}, "total_entities": 0, "hint": "No specialty column found."}
+        spec_counts = candidates_df[spec_col].dropna().str.lower().value_counts().to_dict()
+        entity_count = candidates_df[entity_col].nunique() if entity_col else len(candidates_df)
+        return {
+            "entities": [],
+            "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0},
+            "available_specialties": {k: int(v) for k, v in spec_counts.items()},
+            "total_entities": int(entity_count),
+            "hint": "Pass 'specialties' to get entities, or 'search' to find entities by name.",
+        }
 
-    # 1. Find entities that have the specialty (case-insensitive)
-    eligible_providers = candidates_df[candidates_df[spec_col].str.lower().isin(target_specialties_lower)]
+    # --- Build eligible provider mask ---
+    eligible_mask = pd.Series(True, index=candidates_df.index)
+
+    # Filter by specialties (exact, case-insensitive)
+    if specialties:
+        target_specialties_lower = [s.lower() for s in specialties]
+        if spec_col is None:
+            return {"entities": [], "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0}, "error": "No specialty column found in candidate data."}
+        spec_match = candidates_df[spec_col].str.lower().isin(target_specialties_lower)
+        eligible_mask = eligible_mask & spec_match
+
+    # Filter by search text (entity name, specialty, city)
+    if search and search.strip():
+        search_lower = search.lower()
+        text_match = pd.Series(False, index=candidates_df.index)
+        if entity_col and pd.api.types.is_string_dtype(candidates_df[entity_col]):
+            text_match = text_match | candidates_df[entity_col].str.lower().str.contains(search_lower, na=False)
+        if spec_col and pd.api.types.is_string_dtype(candidates_df[spec_col]):
+            text_match = text_match | candidates_df[spec_col].str.lower().str.contains(search_lower, na=False)
+        if city_col and pd.api.types.is_string_dtype(candidates_df[city_col]):
+            text_match = text_match | candidates_df[city_col].str.lower().str.contains(search_lower, na=False)
+        eligible_mask = eligible_mask & text_match
+
+    eligible_providers = candidates_df[eligible_mask]
     if eligible_providers.empty:
-        return f"No available candidates for the requested specialties: {target_specialties}."
+        if specialties and search:
+            return {"entities": [], "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0}, "error": f"No available candidates matching specialties {specialties} and search '{search}'."}
+        elif specialties:
+            return {"entities": [], "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0}, "error": f"No available candidates for the requested specialties: {specialties}."}
+        else:
+            return {"entities": [], "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0}, "error": f"No available candidates matching search '{search}'."}
 
-    eligible_entities = set(eligible_providers[entity_col].dropna().unique())
+    eligible_entities = set(eligible_providers[entity_col].dropna().unique()) if entity_col else set()
 
-    # 2. Exclude entities that are already (partially) in the network
-    if not network_df.empty and entity_col in network_df.columns:
+    # Exclude entities already in the network
+    if include_not_in_network and not network_df.empty and entity_col in network_df.columns:
         used_entities = set(network_df[entity_col].unique())
         eligible_entities = eligible_entities - used_entities
 
-    if not eligible_entities:
-        return "No available entities for these specialties."
+    # Exclude specific entity IDs
+    if exclude_entity_ids:
+        eligible_entities = eligible_entities - set(exclude_entity_ids)
 
-    # 3. Use pre-computed entity summaries (fall back to computing if not provided)
+    if not eligible_entities:
+        return {"entities": [], "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0}, "error": "No available entities match the specified filters."}
+
+    # --- Build entity summaries ---
     if entity_summaries:
         summaries_df = pd.DataFrame(entity_summaries)
         entity_key = "entity" if "entity" in summaries_df.columns else summaries_df.columns[0]
@@ -500,6 +654,32 @@ def get_candidates(
     else:
         filtered_entities = summaries_df.loc[list(eligible_entities)]
 
+    if filtered_entities.empty:
+        return {"entities": [], "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0}, "error": "No available entities match the specified filters."}
+
+    # --- Apply min thresholds on aggregated metrics ---
+    if min_effectiveness is not None:
+        if "avg_effectiveness" in filtered_entities.columns:
+            filtered_entities = filtered_entities[filtered_entities["avg_effectiveness"] >= min_effectiveness]
+        else:
+            if spec_col:
+                eff_by_entity = eligible_providers.groupby(entity_col)["effectiveness"].mean()
+                filtered_entities = filtered_entities[
+                    filtered_entities.index.isin(eff_by_entity[eff_by_entity >= min_effectiveness].index)
+                ]
+
+    if min_provider_count is not None:
+        if "provider_count" in filtered_entities.columns:
+            filtered_entities = filtered_entities[filtered_entities["provider_count"] >= min_provider_count]
+
+    if max_geographic_reach is not None:
+        if "geographic_reach" in filtered_entities.columns:
+            filtered_entities = filtered_entities[filtered_entities["geographic_reach"] <= max_geographic_reach]
+
+    if filtered_entities.empty:
+        return {"entities": [], "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0}, "error": "No available entities match the specified filters."}
+
+    # --- Sort ---
     if weighted_metrics:
         def calculate_score(row):
             score = 0.0
@@ -517,14 +697,17 @@ def get_candidates(
         if sort_by in filtered_entities.columns:
             filtered_entities = filtered_entities.sort_values(by=sort_by, ascending=ascending)
         else:
-            return f"Invalid sort_by value '{sort_by}'. Valid entity metrics are: {list(filtered_entities.columns)}"
+            return {"entities": [], "pagination": {"total_matching": 0, "offset": offset, "limit": limit, "returned": 0}, "error": f"Invalid sort_by value '{sort_by}'. Valid entity metrics are: {list(filtered_entities.columns)}"}
 
-    if len(filtered_entities) > limit:
-        filtered_entities = filtered_entities.head(limit)
+    # --- Paginate ---
+    total_count = len(filtered_entities)
+    paginated = filtered_entities.iloc[offset:offset + limit]
+    if len(paginated) > limit:
+        paginated = paginated.head(limit)
 
-    # 4. Convert to Entity Summary Objects
+    # --- Convert to Entity Summary Objects ---
     results = []
-    for entity_id, row in filtered_entities.iterrows():
+    for entity_id, row in paginated.iterrows():
         results.append({
             "entity_id": entity_id,
             "metrics": {
@@ -544,7 +727,15 @@ def get_candidates(
             },
         })
 
-    return results
+    return {
+        "entities": results,
+        "pagination": {
+            "total_matching": int(total_count),
+            "offset": int(offset),
+            "limit": int(limit),
+            "returned": len(results),
+        },
+    }
 
 
 @tool
@@ -811,8 +1002,88 @@ def simulate_network_change(
     }
 
 
+def _run_code_timeout_handler(signum, frame):
+    """Signal handler for code execution timeout."""
+    raise TimeoutError("Code execution timed out after 20 seconds")
+
+
+@tool
+def run_code(
+    code: str,
+    candidates: Annotated[list[dict], InjectedState("candidates")],
+    entity_summaries: Annotated[list[dict], InjectedState("entity_summaries")],
+    network: Annotated[list[dict], InjectedState("network")],
+    members: Annotated[list[dict], InjectedState("members")],
+) -> str:
+    """Execute Python/pandas code to filter or analyze candidate data.
+
+    The following variables are available in the sandbox:
+    - candidates_df: Raw provider-level candidate data (DataFrame)
+    - entity_summaries_df: Pre-aggregated entity summaries (DataFrame)
+    - network_df: Currently contracted providers (DataFrame)
+    - members_df: Member locations (DataFrame)
+
+    Assign your result to 'result'. Returns as JSON.
+    Allowed: pandas, numpy, json, math, functools, itertools, collections.
+    Timeout: 20 seconds.
+
+    Examples:
+      result = candidates_df[candidates_df['effectiveness'] > 3.5]
+      result = entity_summaries_df.sort_values('avg_effectiveness', ascending=False).head(5)[['entity', 'avg_effectiveness']]
+    """
+    sandbox_globals = {
+        "__builtins__": {},
+        "pd": pd,
+        "np": np,
+        "json": json,
+        "math": math,
+        "functools": functools,
+        "itertools": itertools,
+        "defaultdict": defaultdict,
+        "candidates_df": pd.DataFrame(candidates) if candidates else pd.DataFrame(),
+        "entity_summaries_df": pd.DataFrame(entity_summaries) if entity_summaries else pd.DataFrame(),
+        "network_df": pd.DataFrame(network) if network else pd.DataFrame(),
+        "members_df": pd.DataFrame(members) if members else pd.DataFrame(),
+    }
+
+    # Use threading-based timeout since signal.alarm doesn't work in non-main threads
+    import threading
+
+    result_holder = {"value": None, "error": None}
+    timer = threading.Timer(20.0, lambda: None)  # placeholder
+
+    def _execute():
+        try:
+            exec(code, sandbox_globals)
+            result_holder["value"] = sandbox_globals.get("result")
+        except TimeoutError as e:
+            result_holder["error"] = f"Timeout: {str(e)}"
+        except Exception as e:
+            result_holder["error"] = f"{type(e).__name__}: {str(e)}"
+
+    thread = threading.Thread(target=_execute)
+    thread.daemon = True
+    thread.start()
+    thread.join(timeout=20.0)
+
+    if thread.is_alive():
+        return "Error: Code execution timed out after 20 seconds."
+
+    if result_holder["error"]:
+        return f"Error: {result_holder['error']}"
+
+    result = result_holder["value"]
+
+    if isinstance(result, pd.DataFrame):
+        return result.to_dict(orient="records")
+    elif isinstance(result, (dict, list, str, int, float, bool, type(None))):
+        return result
+    else:
+        return str(result)
+
+
 # ---------------------------------------------------------------------------
 # Tool collection
 # ---------------------------------------------------------------------------
 
-TOOLS = [get_candidates, add_contract_entity, get_network_status, simulate_network_change]
+TOOLS = [add_contract_entity, get_network_status, simulate_network_change, run_code]
