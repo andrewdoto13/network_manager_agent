@@ -73,6 +73,7 @@ ENV/
 # Project-specific
 react_agent_actions_*.txt
 *.log
+checkpoints.sqlite
 
 # Opencode
 .opencode/
