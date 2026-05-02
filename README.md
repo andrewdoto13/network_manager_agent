@@ -9,14 +9,18 @@ This project implements a ReAct (Reasoning + Acting) agent that manages a health
 - Loads candidate providers and member location data.
 - Uses an LLM to reason about which providers to add to the network based on coverage, quality, and accessibility.
 - Tracks network coverage of members within a distance threshold.
-- Simulates network changes to evaluate the impact of adding or removing entities before committing.
+- Performs complex data analysis and "what-if" network simulations using a sandboxed pandas execution environment.
 
 ## Architecture
 
 The agent is built with [LangGraph](https://langchain-ai.github.io/langgraph/) and consists of:
 
 - **State**: Defines the agent's state including candidates, members, current network, and conversation history.
-- **Tools**: `get_candidates`, `add_contract_entity`, `get_network_status`, `simulate_network_change`.
+- **Persistence**: Uses `SqliteSaver` to persist session state in `checkpoints.sqlite`, allowing conversations to be resumed via `thread_id`.
+- **Tools**: 
+    - `run_code`: A powerful pandas sandbox used for discovery, custom filtering, and simulating coverage impact.
+    - `add_contract_entity`: Commits entities to the network.
+    - `get_network_status`: Source of truth for current member coverage.
 - **Nodes**: `network_manager` (LLM reasoning), `tools` (tool execution), `update_state`, `summarize_messages` (context management).
 - **Graph**: START → network_manager → [tools → update_state → {summarize_messages | continue}] → END.
 
@@ -33,6 +37,36 @@ pip install -e ".[dev]"
 
 ## Usage
 
+### CLI
+
+The agent can be run in interactive mode or with a direct prompt:
+
+```bash
+# Interactive mode
+python -m network_manager_agent.main
+
+# Direct prompt
+python -m network_manager_agent.main "Find candidates in Wayne county with effectiveness > 80%"
+```
+
+### Session Management
+
+The agent supports persistent threads. You can resume a previous conversation or start a fresh one using the following flags:
+
+```bash
+# Run a specific thread (or create it if it doesn't exist)
+python -m network_manager_agent.main --thread-id my_test_session "..."
+
+# List all existing threads in the database
+python -m network_manager_agent.main --list-threads
+
+# Clear a specific thread
+python -m network_manager_agent.main --clear-thread my_test_session
+
+# Wipe the entire persistence database
+python -m network_manager_agent.main --clear-all
+```
+
 ### Jupyter Notebook
 
 Open the interactive notebook for exploration and testing:
@@ -40,12 +74,6 @@ Open the interactive notebook for exploration and testing:
 ```bash
 cd notebooks
 jupyter lab react_agent.ipynb
-```
-
-### CLI
-
-```bash
-python -m network_manager_agent.main
 ```
 
 ## Data Format
@@ -72,6 +100,7 @@ Contains Medicare provider location data with coordinates, county (`countyname`)
 │       ├── nodes.py        # Node implementations
 │       ├── state.py        # Agent state definition
 │       └── tools.py        # Tool definitions and logic
+│       ├── checkpoints.sqlite # Persistence database (generated at runtime)
 ├── notebooks/              # Interactive development notebooks
 │   └── react_agent.ipynb
 ├── data/                   # Data files
