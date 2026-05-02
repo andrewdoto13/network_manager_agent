@@ -77,3 +77,8 @@ react_agent_actions_*.txt
 # Opencode
 .opencode/
 
+# Data files (local only, not tracked)
+data/raw/*.csv
+data/raw/*.parquet
+data/raw/*.json
+
