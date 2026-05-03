@@ -49,9 +49,9 @@ def run_agent(agent, inputs: dict, config: dict, output_dir: Path | None = None)
                             if isinstance(content, str):
                                 try:
                                     parsed = json.loads(content)
-                                    added = parsed.get("added_providers", [])
+                                    added = parsed.get("added_entities", [])
                                     errors = parsed.get("errors", [])
-                                    print(f"   Added {len(added)} providers")
+                                    print(f"   Added {len(added)} entities")
                                     if errors:
                                         print(f"   Errors: {', '.join(errors)}")
                                 except json.JSONDecodeError:

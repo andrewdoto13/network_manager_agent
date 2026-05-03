@@ -19,7 +19,7 @@ class LLMConfig:
 
 SUMMARIZE_THRESHOLD = 14
 MESSAGES_TO_ARCHIVE = SUMMARIZE_THRESHOLD // 2
-SERVICE_AREA_BUFFER_MILES = 20
+SERVICE_AREA_BUFFER_MILES = 20  # Buffer added to max threshold when filtering service area
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "raw"

@@ -11,18 +11,12 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import ToolNode
 
 from .config import SUMMARIZE_THRESHOLD, MESSAGES_TO_ARCHIVE
+from .data import DataManager
 from .state import AgentState
-from .tools import (
-    get_candidate_schema_profile,
-    get_raw_candidate_schema_profile,
-    add_contract_entity,
-    get_network_status,
-    simulate_network_change,
-    run_code,
-    TOOLS,
-)
+from .tools import TOOLS
 
 
 def _get_anchor_message(state: AgentState) -> str:
@@ -35,7 +29,7 @@ def _get_anchor_message(state: AgentState) -> str:
 
 def network_manager(state: AgentState, llm: ChatOpenAI):
     """The main LLM reasoning node that decides which tools to call."""
-
+    dm = DataManager()
     county_specialty_thresholds = state.get("county_specialty_thresholds", {})
 
     scope_lines = []
@@ -48,20 +42,14 @@ def network_manager(state: AgentState, llm: ChatOpenAI):
     # Inject candidate schema into system prompt (pre-computed or fallback)
     schema_section = state.get("schema_profile", "")
     if not schema_section:
-        candidates = state.get("candidates", [])
-        entity_summaries = state.get("entity_summaries", [])
-        schema_profile = get_candidate_schema_profile(
-            candidates=candidates,
-            entity_summaries=entity_summaries,
-        )
+        schema_profile = dm.get_schema_profile()
         if isinstance(schema_profile, dict) and schema_profile:
             schema_section = json.dumps(schema_profile, indent=2)
         else:
             schema_section = "No schema available."
 
     # Build concise raw candidate schema for run_code tool
-    candidates = state.get("candidates", [])
-    raw_schema = get_raw_candidate_schema_profile(candidates)
+    raw_schema = dm.get_raw_candidate_schema_profile()
     # Only include column names and types, not full distributions
     raw_schema_section = ""
     if raw_schema:
@@ -94,27 +82,12 @@ RULES
 ---------------
 1. You may ONLY call add_contract_entity with valid entity IDs that you discover through your analysis.
 2. Never invent entities, providers, specialties, counts, or network state. Use ONLY the data returned by tools.
-3. The get_network_status function is THE source of truth for the network.
-4. Factor in the user's stated preferences when deciding whether to call tools.
-5. If required information is missing, ask the user for clarification instead of guessing.
-6. You MUST always write a response in your final message. Never return an empty response.
-   Always summarize what was accomplished when the task is complete.
-7. When evaluating potential network changes, use the run_code tool to simulate the impact on member coverage.
-   Create a temporary network DataFrame (e.g., by concatenating existing network with new candidates)
-   and call compute_coverage(sim_net, members_df, thresholds, candidates_df) to assess the coverage delta.
-8. Be decisive. After gathering sufficient data, present your findings.
-   Do not repeat the same reasoning or simulations.
-9. If the user asks for recommendations, analysis, or evaluation — present your findings
-   and stop. You may suggest entities or ask if the user wants to proceed, but do NOT
-   call add_contract_entity in the same response.
-10. You have a `run_code` tool that executes pandas code for Discovery and Validation.
-    Variables available: candidates_df, entity_summaries_df, network_df, members_df, thresholds,
-    and a compute_coverage helper. Assign your result to 'result'. Timeout is 20 seconds.
-    Allowed modules: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree.
-11. Use the raw provider-level columns above to write effective run_code queries.
-    For example, filter by location_confidence, new_patient_claims, or effectiveness at the
-    provider level, then groupby('entity') to get entity-level results.
-12. Use the entity summaries schema for quick entity-level queries.
+3. Use run_code with compute_coverage(network_df, members_df, thresholds, candidates_df) to check current network status or simulate changes. Create a temporary network DataFrame (e.g., by concatenating existing network with new candidates) and call compute_coverage(sim_net, members_df, thresholds, candidates_df) to assess the coverage delta.
+4. If required information is missing, ask the user for clarification instead of guessing.
+5. You MUST always write a response in your final message. Never return an empty response. Always summarize what was accomplished when the task is complete.
+6. Be decisive. After gathering sufficient data, present your findings. Do not repeat the same reasoning or simulations.
+7. If the user asks for recommendations, analysis, or evaluation — present your findings and stop. Factor in the user's stated preferences. You may suggest entities or ask if the user wants to proceed, but do NOT call add_contract_entity in the same response.
+8. Your run_code tool executes pandas code. Variables available: candidates_df, entity_summaries_df, network_df, members_df, thresholds, and compute_coverage. Assign your result to 'result'. Timeout is 20 seconds. Allowed modules: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree. Use the raw provider-level columns above to write effective queries — for example, filter by location_confidence or effectiveness at the provider level, then groupby('entity') for entity-level results. Use the entity summaries schema for quick entity-level queries.
 '''
 
     messages_history = state.get("messages", [])
@@ -146,9 +119,9 @@ RULES
 
 
 def update_state(state: AgentState):
-    """Extract new providers from tool results and update the network state."""
+    """Extract new entity IDs from tool results and update the network state."""
     messages = state["messages"]
-    new_providers = []
+    new_entities = []
 
     batch = []
     for msg in reversed(messages):
@@ -166,15 +139,15 @@ def update_state(state: AgentState):
             try:
                 parsed_output = json.loads(raw_output) if isinstance(raw_output, str) else raw_output
                 if isinstance(parsed_output, dict):
-                    added = parsed_output.get("added_providers", [])
+                    added = parsed_output.get("added_entities", [])
                     if isinstance(added, list):
-                        new_providers.extend(added)
+                        new_entities.extend(added)
                     else:
-                        new_providers.append(parsed_output)
+                        new_entities.append(parsed_output)
             except (json.JSONDecodeError, ValueError):
                 continue
 
-    return {"network": new_providers} if new_providers else {}
+    return {"network": new_entities} if new_entities else {}
 
 
 def _get_content(m: Any) -> str:
@@ -250,7 +223,6 @@ def should_summarize(state: AgentState):
 
 def execute_tools(state: AgentState):
     """Custom tool execution node that catches errors and returns them as ToolMessages."""
-    from langgraph.prebuilt import ToolNode
     tool_node = ToolNode(TOOLS)
     try:
         return tool_node.invoke(state)
@@ -258,15 +230,15 @@ def execute_tools(state: AgentState):
         messages = state.get("messages", [])
         last_ai_msg = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
         if last_ai_msg and last_ai_msg.tool_calls:
-            tool_call = last_ai_msg.tool_calls[0]
-            return {
-                "messages": [
+            error_messages = []
+            for tool_call in last_ai_msg.tool_calls:
+                error_messages.append(
                     ToolMessage(
                         tool_call_id=tool_call["id"],
                         content=f"Error executing tool {tool_call['name']}: {str(e)}",
                     )
-                ]
-            }
+                )
+            return {"messages": error_messages}
         return {
             "messages": [
                 ToolMessage(

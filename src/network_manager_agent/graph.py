@@ -39,6 +39,7 @@ def build_agent(llm: ChatOpenAI, checkpointer=None):
     builder.add_conditional_edges(
         "network_manager",
         tools_condition,
+        {"tools": "tools", "__end__": "__end__"},
     )
 
     builder.add_conditional_edges(

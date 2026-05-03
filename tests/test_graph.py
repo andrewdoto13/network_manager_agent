@@ -1,42 +1,93 @@
-"""Tests for graph construction in graph.py."""
+"""Tests for graph.py — graph construction and edge routing."""
 
+import pytest
 from unittest.mock import MagicMock
 
-from langchain_openai import ChatOpenAI
-
-from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.prebuilt import tools_condition
 
 from network_manager_agent.graph import build_agent
 
 
-def _make_mock_llm():
-    """Create a mocked ChatOpenAI instance."""
-    llm = MagicMock(spec=ChatOpenAI)
-    return llm
-
+# ---------------------------------------------------------------------------
+# build_agent
+# ---------------------------------------------------------------------------
 
 class TestBuildAgent:
-    """Tests for the build_agent function."""
+    def test_returns_compiled_graph(self, clean_data_manager):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke.return_value = AIMessage(content="OK")
 
-    def test_compiles_without_error(self):
-        llm = _make_mock_llm()
-        agent = build_agent(llm)
+        agent = build_agent(mock_llm)
         assert agent is not None
 
-    def test_has_expected_nodes(self):
-        llm = _make_mock_llm()
-        agent = build_agent(llm)
+    def test_graph_has_expected_nodes(self, clean_data_manager):
+        mock_llm = MagicMock()
+        agent = build_agent(mock_llm)
+
+        node_names = list(agent.get_graph().nodes.keys())
+        assert "network_manager" in node_names
+        assert "tools" in node_names
+        assert "update_state" in node_names
+        assert "summarize_messages" in node_names
+
+    def test_start_edges_to_network_manager(self, clean_data_manager):
+        mock_llm = MagicMock()
+        agent = build_agent(mock_llm)
+
         graph = agent.get_graph()
-        node_ids = list(graph.nodes)
+        edge_pairs = [(e.source, e.target) for e in graph.edges]
+        assert ("__start__", "network_manager") in edge_pairs
 
-        assert "network_manager" in node_ids
-        assert "tools" in node_ids
-        assert "update_state" in node_ids
-        assert "summarize_messages" in node_ids
+    def test_tools_to_update_state_edge(self, clean_data_manager):
+        mock_llm = MagicMock()
+        agent = build_agent(mock_llm)
 
-    def test_has_checkpointer(self):
-        llm = _make_mock_llm()
+        graph = agent.get_graph()
+        edge_pairs = [(e.source, e.target) for e in graph.edges]
+        assert ("tools", "update_state") in edge_pairs
+
+    def test_summarize_to_network_manager_edge(self, clean_data_manager):
+        mock_llm = MagicMock()
+        agent = build_agent(mock_llm)
+
+        graph = agent.get_graph()
+        edge_pairs = [(e.source, e.target) for e in graph.edges]
+        assert ("summarize_messages", "network_manager") in edge_pairs
+
+    def test_checkpointer_passed_through(self, clean_data_manager):
+        from langgraph.checkpoint.memory import MemorySaver
+
+        mock_llm = MagicMock()
         checkpointer = MemorySaver()
-        agent = build_agent(llm, checkpointer=checkpointer)
-        # The compiled agent should have a checkpointer configured
-        assert agent.checkpointer is not None
+
+        agent = build_agent(mock_llm, checkpointer=checkpointer)
+        assert agent.checkpointer is checkpointer
+
+
+# ---------------------------------------------------------------------------
+# tools_condition routing
+# ---------------------------------------------------------------------------
+
+class TestToolsCondition:
+    def test_routes_to_tools_when_tool_calls_present(self):
+        state = {
+            "messages": [
+                AIMessage(content="", tool_calls=[{"id": "1", "name": "run_code", "args": {}}]),
+            ]
+        }
+        assert tools_condition(state) == "tools"
+
+    def test_routes_to_end_when_no_tool_calls(self):
+        state = {
+            "messages": [
+                HumanMessage(content="Hello"),
+                AIMessage(content="Here's my response"),
+            ]
+        }
+        assert tools_condition(state) == "__end__"
+
+    def test_routes_to_end_on_empty_messages(self):
+        state = {"messages": []}
+        with pytest.raises(ValueError):
+            tools_condition(state)

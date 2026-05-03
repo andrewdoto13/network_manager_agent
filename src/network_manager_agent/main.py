@@ -9,24 +9,17 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage
 
 from .config import LLMConfig, create_llm
-from .data import load_data
-from .tools import (
-    _filter_by_service_area,
-    precompute_entity_summaries,
-    get_candidate_schema_profile,
-)
+from .data import DataManager
 from .graph import build_agent
 from .ui import run_agent
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 
-def run_agent_session(agent, prompt, candidates, members, thresholds, summaries, profile, thread_config):
+def run_agent_session(agent, prompt, thresholds, summaries, profile, thread_config):
     """Helper to encapsulate agent execution and summary printing."""
     messages = [HumanMessage(content=prompt)]
     inputs = {
         "messages": messages,
-        "candidates": candidates,
-        "members": members,
         "county_specialty_thresholds": thresholds,
         "entity_summaries": summaries,
         "schema_profile": profile,
@@ -157,24 +150,20 @@ def main():
             print("Error: --county-specialty-thresholds must be a valid JSON string.")
             sys.exit(1)
 
-    # Load data
-    candidates, members = load_data(
+    # Initialize DataManager: handles loading and filtering internally
+    dm = DataManager(
         candidates_path=args.candidates,
         members_path=args.members,
+        county_specialty_thresholds=county_specialty_thresholds,
     )
-
-    # Pre-compute: filter by service area, aggregate entities, build schema
-    filtered_candidates, filtered_members = _filter_by_service_area(
-        candidates, members, county_specialty_thresholds
-    )
-
-    entity_summaries = precompute_entity_summaries(filtered_candidates)
-    schema_profile = get_candidate_schema_profile(candidates=filtered_candidates)
-
+    
+    entity_summaries = dm.get_entity_summaries()
+    schema_profile = json.dumps(dm.get_schema_profile(), indent=2)
 
     print(
-        f"Loaded {len(candidates)} raw candidates, {len(members)} raw members "
-        f"-> {len(filtered_candidates)} in service area, {len(filtered_members)} scoped members "
+        f"Loaded candidates and members -> "
+        f"{len(dm.get_candidates_df())} candidates in service area, "
+        f"{len(dm.get_members_df())} scoped members "
         f"-> {len(entity_summaries)} entities"
     )
 
@@ -194,7 +183,7 @@ def main():
             while prompt.lower() not in ("quit", "exit", "q"):
                     if prompt:
                         run_agent_session(
-                            agent, prompt, filtered_candidates, filtered_members, 
+                            agent, prompt, 
                             county_specialty_thresholds, entity_summaries, 
                             schema_profile, thread_config
                         )
@@ -204,7 +193,7 @@ def main():
 
         if args.prompt:
             run_agent_session(
-                agent, args.prompt, filtered_candidates, filtered_members, 
+                agent, args.prompt, 
                 county_specialty_thresholds, entity_summaries, 
                 schema_profile, thread_config
             )
