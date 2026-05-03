@@ -39,55 +39,82 @@ def network_manager(state: AgentState, llm: ChatOpenAI):
             scope_lines.append(f"- {state_val}/{county}: {spec_str}")
     scope_section = "\n".join(scope_lines) if scope_lines else ""
 
-    # Inject candidate schema into system prompt (pre-computed or fallback)
-    schema_section = state.get("schema_profile", "")
-    if not schema_section:
-        schema_profile = dm.get_schema_profile()
-        if isinstance(schema_profile, dict) and schema_profile:
-            schema_section = json.dumps(schema_profile, indent=2)
-        else:
-            schema_section = "No schema available."
+    cand_cols = ", ".join(dm.get_candidates_df().columns)
+    mem_cols = ", ".join(dm.get_members_df().columns)
+    ent_cols = ", ".join(dm.entity_summaries_df.columns)
 
-    # Build concise raw candidate schema for run_code tool
-    raw_schema = dm.get_raw_candidate_schema_profile()
-    # Only include column names and types, not full distributions
-    raw_schema_section = ""
-    if raw_schema:
-        for col, info in raw_schema.items():
-            col_type = info.get("type", "unknown")
-            unique_count = info.get("unique_count", "")
-            if unique_count:
-                raw_schema_section += f"- {col}: {col_type} (unique_count={unique_count})\n"
-            else:
-                raw_schema_section += f"- {col}: {col_type}\n"
-
-    system_message_content = f'''
-You are an assistant responsible for managing a healthcare provider network.
-You MUST use the available tools to update the network state.
+    system_message_content = f'''ROLE
+You are a healthcare provider network management assistant. Your job is to analyze
+candidate provider data, simulate network changes, and recommend or commit contract
+entities to improve member coverage. You MUST use the available tools to analyze data
+and update the network.
 
 NETWORK SCOPE
 You are evaluating member coverage for these county-specialty combinations:
 {scope_section}
 
-CANDIDATE DATA SCHEMA
-Entity summaries (aggregated):
-{schema_section}
+DATA
+Three DataFrames available in run_code:
 
-Raw provider-level columns:
-{raw_schema_section}
+candidates_df (provider-level): {cand_cols}
+members_df (member-level): {mem_cols}
+entity_summaries_df (per-entity): {ent_cols}
 
-Follow all rules below exactly.
+CODE PATTERNS
+Copy-paste starting points for common tasks. Each is a self-contained run_code block.
+
+1) Geographic filtering — find providers within threshold miles of members in a county:
+   import numpy as np
+   from sklearn.neighbors import BallTree
+   county_members = members_df[members_df["county"].str.lower() == "washtenaw"]
+   cardio = candidates_df[candidates_df["specialty"].str.lower().isin(["cardiology"])]
+   tree = BallTree(np.deg2rad(cardio[["lat", "lon"]]), metric="haversine")
+   threshold_miles = thresholds["MI"]["washtenaw"]["cardiology"]
+   radius_rad = threshold_miles / 3958.8
+   nearby = tree.query_radius(np.deg2rad(county_members[["lat", "lon"]]), r=radius_rad)
+   covered = sum(len(i) > 0 for i in nearby)
+   result = f"{{covered}}/{{len(county_members)}} members covered"
+   # NOTE: use exact match ("cardiology"), not .str.contains() — "cardio" also matches "Cardiothoracic Surgery"
+
+2) Entity-level queries — filter and rank from entity_summaries_df:
+   mask = entity_summaries_df["avg_effectiveness"] >= 4.0
+   cardio = entity_summaries_df[mask & entity_summaries_df["specialties"].apply(
+       lambda x: any("cardiology" == s.lower() for s in x) if isinstance(x, list) else False)]
+   result = cardio.nlargest(5, "provider_count")[["entity", "provider_count", "avg_effectiveness", "avg_efficiency"]]
+
+3) Coverage simulation — test adding entities before committing:
+   new_entities = ["Entity A", "Entity B"]
+   new_providers = candidates_df[candidates_df["entity"].isin(new_entities)]
+   sim_net = pd.concat([network_df, new_providers])
+   coverage, errors = compute_coverage(sim_net, members_df, thresholds, candidates_df)
+   result = pd.DataFrame(coverage)
+
+4) Multi-specialty entities — find entities with ALL required specialties:
+    required = {{"cardiology", "general practice"}}
+   entity_specs = candidates_df.groupby("entity")["specialty"].apply(
+       lambda x: set(x.str.lower().unique()))
+   multi = entity_specs[entity_specs.apply(lambda s: required.issubset(s))]
+   result = multi.index.tolist()
+
+5) Coverage delta — compare baseline vs simulated:
+   base_cov, _ = compute_coverage(network_df, members_df, thresholds, candidates_df)
+   base_df = pd.DataFrame(base_cov)
+   new_providers = candidates_df[candidates_df["entity"].isin(["New Entity"])]
+   sim_cov, _ = compute_coverage(pd.concat([network_df, new_providers]), members_df, thresholds, candidates_df)
+   sim_df = pd.DataFrame(sim_cov)
+   merged = pd.merge(base_df, sim_df, on=["state", "county", "specialty"], suffixes=("_base", "_sim"))
+   merged["delta_pp"] = merged["coverage_percentage_sim"] - merged["coverage_percentage_base"]
+   result = merged[["county", "specialty", "coverage_percentage_base", "coverage_percentage_sim", "delta_pp"]]
 
 RULES
----------------
-1. You may ONLY call add_contract_entity with valid entity IDs that you discover through your analysis.
-2. Never invent entities, providers, specialties, counts, or network state. Use ONLY the data returned by tools.
-3. Use run_code with compute_coverage(network_df, members_df, thresholds, candidates_df) to check current network status or simulate changes. Create a temporary network DataFrame (e.g., by concatenating existing network with new candidates) and call compute_coverage(sim_net, members_df, thresholds, candidates_df) to assess the coverage delta.
-4. If required information is missing, ask the user for clarification instead of guessing.
-5. You MUST always write a response in your final message. Never return an empty response. Always summarize what was accomplished when the task is complete.
-6. Be decisive. After gathering sufficient data, present your findings. Do not repeat the same reasoning or simulations.
-7. If the user asks for recommendations, analysis, or evaluation — present your findings and stop. Factor in the user's stated preferences. You may suggest entities or ask if the user wants to proceed, but do NOT call add_contract_entity in the same response.
-8. Your run_code tool executes pandas code. Variables available: candidates_df, entity_summaries_df, network_df, members_df, thresholds, and compute_coverage. Assign your result to 'result'. Timeout is 20 seconds. Allowed modules: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree. Use the raw provider-level columns above to write effective queries — for example, filter by location_confidence or effectiveness at the provider level, then groupby('entity') for entity-level results. Use the entity summaries schema for quick entity-level queries.
+1. You may ONLY call add_contract_entity with valid entity names found in the data. Never invent entities, providers, or metrics.
+2. Use run_code with compute_coverage() to check current status or simulate changes. Create a temporary network by concatenating existing network with new candidates, then call compute_coverage(sim_net, members_df, thresholds, candidates_df).
+3. If required information is missing, ask the user for clarification instead of guessing.
+4. Always write a response in your final message. Never return an empty response. Summarize what was accomplished when complete.
+5. Be decisive. After gathering sufficient data, present your findings. Do not repeat the same reasoning or simulations.
+6. If the user asks for analysis or recommendations — present your findings and stop. You may suggest entities or ask if the user wants to proceed, but do NOT call add_contract_entity in the same response.
+7. When building networks, present your best result with coverage numbers in your final message — do not keep exploring after you have a viable answer.
+8. run_code mechanics: each call is a fresh sandbox — variables from a previous call are NOT available. The schema is documented above — do NOT waste calls exploring column names. Assign your result to 'result'. Timeout is 60s. Allowed: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree.
 '''
 
     messages_history = state.get("messages", [])
@@ -111,7 +138,29 @@ RULES
             ] + messages_history
 
     tools_list = TOOLS
-    response = llm.bind_tools(tools_list).invoke(messages)
+
+    # Retry on empty response (up to 3 attempts)
+    for attempt in range(3):
+        response = llm.bind_tools(tools_list).invoke(messages)
+        content = response.content if hasattr(response, 'content') else ""
+        tool_calls = response.tool_calls if hasattr(response, 'tool_calls') else []
+        if content.strip() or tool_calls:
+            break
+        # Empty response — append a nudge and retry
+        messages = messages + [
+            AIMessage(content="I need to continue analyzing the data."),
+            HumanMessage(content="Continue. Use run_code to analyze, then add_contract_entity to commit entities. Provide a final answer when done."),
+        ]
+    else:
+        # All retries failed — force a meaningful response
+        response = AIMessage(
+            content="I've analyzed the data. Let me commit the best entities found to the network.",
+            tool_calls=[{
+                "name": "run_code",
+                "args": {"code": "# Final analysis\ncoverage_results, errors = compute_coverage(network_df, members_df, thresholds, candidates_df)\nprint('Coverage:', coverage_results)\nprint('Errors:', errors)"},
+                "id": "final_check",
+            }],
+        )
 
     return {
         "messages": [response],
@@ -172,19 +221,24 @@ def summarize_messages(state: AgentState, llm: ChatOpenAI):
     to_summarize = messages[:last_message_to_summarize + 1]
  
     instruction = f"""You are a task summarizer. Update the existing summary based on the new history provided below.
- 
+
     EXISTING SUMMARY:
     {existing_summary if existing_summary else "No previous summary."}
- 
+
     STRUCTURE:
-    Objective: [Recap of the user requests]
-    Progress: [High-level status of progress, summarizing the tools that you called]
- 
+    Objective: [User's original request and constraints — preserve verbatim]
+    Progress: [What tools were called and what was accomplished]
+    Key Findings: [Quantitative results: coverage percentages, entity names with provider counts, best combinations found, geographic constraints]
+    Remaining: [What still needs to be done to complete the task]
+
     RULES:
     1. Use ONLY English.
     2. Incorporate new info into the existing summary; do not just append.
     3. Be specific with the objective because details matter here.
-    4. Always preserve the user's original constraints and preferences verbatim in the Objective section, no matter what actually happened during execution.
+    4. Always preserve the user's original constraints and preferences verbatim in the Objective section.
+    5. Preserve ALL quantitative results from tool output: exact coverage percentages, provider counts, entity names, distances, rankings. Do not replace numbers with vague descriptions.
+    6. When listing entities, include their key metrics (e.g., "MyMichigan Health: 124 cardio providers, eff 5.0").
+    7. Always include the best combination or result found so far, with exact numbers.
     """
  
     history_text = "\n".join([f"{m.type}: {_get_content(m)}" for m in to_summarize])

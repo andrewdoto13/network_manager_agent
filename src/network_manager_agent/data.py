@@ -132,7 +132,15 @@ class DataManager:
         agg_map = {}
         if eff_col: agg_map[eff_col] = "mean"
         if eta_col: agg_map[eta_col] = "mean"
-        if spec_col: agg_map[spec_col] = lambda x: sorted(set(x.dropna()))
+        if spec_col:
+            agg_map[spec_col] = (
+                lambda x: x.value_counts().head(10).index.tolist()
+                + (
+                    [f"... and {x.dropna().nunique() - 10} more"]
+                    if x.dropna().nunique() > 10
+                    else []
+                )
+            )
         if new_pat_col: agg_map[new_pat_col] = lambda x: float(round((x == 'Yes').mean() * 100, 2)) if not x.empty else None
         if medicare_claims_vol_col:
             agg_map[medicare_claims_vol_col] = lambda x: {k: int(v) for k, v in x.dropna().value_counts().to_dict().items()}

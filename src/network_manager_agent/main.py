@@ -15,7 +15,9 @@ from .ui import run_agent
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 
-def run_agent_session(agent, prompt, thresholds, summaries, profile, thread_config):
+def run_agent_session(
+    agent, prompt, thresholds, summaries, profile, thread_config, max_steps=None
+):
     """Helper to encapsulate agent execution and summary printing."""
     messages = [HumanMessage(content=prompt)]
     inputs = {
@@ -24,7 +26,7 @@ def run_agent_session(agent, prompt, thresholds, summaries, profile, thread_conf
         "entity_summaries": summaries,
         "schema_profile": profile,
     }
-    run_agent(agent, inputs, thread_config)
+    run_agent(agent, inputs, thread_config, max_steps=max_steps)
     
     state = agent.get_state(thread_config)
     summary = state.values.get("summary", "")
@@ -68,7 +70,8 @@ def main():
         "--county-specialty-thresholds",
         type=str,
         default=None,
-        help="JSON string mapping state->county->specialty->threshold (e.g. '{\"mi\": {\"wayne\": {\"general practice\": 20.0, \"cardiology\": 10.0}}'). Default threshold is 20.0 miles.",
+        required=False,
+        help="REQUIRED: JSON string mapping state->county->specialty->threshold (e.g. '{\"mi\": {\"wayne\": {\"general practice\": 20.0, \"cardiology\": 10.0}}'). Default threshold is 20.0 miles.",
     )
     parser.add_argument(
         "--thread-id",
@@ -91,6 +94,12 @@ def main():
         "--clear-all",
         action="store_true",
         help="Wipe the entire persistence database.",
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Maximum number of agent steps before auto-stopping. None = unlimited.",
     )
 
     args = parser.parse_args()
@@ -133,6 +142,13 @@ def main():
             print(f"Cleared all state for thread: {args.clear_thread}")
         sys.exit(0)
 
+    # Validate required args (management commands bypass this check above)
+    if not args.county_specialty_thresholds:
+        parser.error(
+            "the following argument is required: --county-specialty-thresholds\n"
+            "Example: --county-specialty-thresholds '{\"mi\": {\"washtenaw\": {\"cardiology\": 10.0, \"general practice\": 20.0}}}'"
+        )
+
     # Create LLM
     config = LLMConfig()
     if args.base_url:
@@ -142,13 +158,15 @@ def main():
 
     llm = create_llm(config)
 
-    county_specialty_thresholds = {}
-    if args.county_specialty_thresholds:
-        try:
-            county_specialty_thresholds = json.loads(args.county_specialty_thresholds)
-        except json.JSONDecodeError:
-            print("Error: --county-specialty-thresholds must be a valid JSON string.")
-            sys.exit(1)
+    try:
+        county_specialty_thresholds = json.loads(args.county_specialty_thresholds)
+    except json.JSONDecodeError:
+        print("Error: --county-specialty-thresholds must be a valid JSON string.")
+        sys.exit(1)
+
+    if not county_specialty_thresholds:
+        print("Error: --county-specialty-thresholds must not be empty. Provide at least one state/county/specialty threshold.")
+        sys.exit(1)
 
     # Initialize DataManager: handles loading and filtering internally
     dm = DataManager(
@@ -175,28 +193,28 @@ def main():
         thread_config = {"configurable": {"thread_id": args.thread_id}}
 
         if args.prompt:
-            prompt = args.prompt
+            run_agent_session(
+                agent, args.prompt,
+                county_specialty_thresholds, entity_summaries,
+                schema_profile, thread_config,
+                max_steps=args.max_steps,
+            )
         else:
             print("Network Management Agent")
             print("Enter your prompt (or 'quit' to exit):")
-            prompt = input("> ").strip()
-            while prompt.lower() not in ("quit", "exit", "q"):
+            try:
+                prompt = input("> ").strip()
+                while prompt.lower() not in ("quit", "exit", "q"):
                     if prompt:
                         run_agent_session(
-                            agent, prompt, 
-                            county_specialty_thresholds, entity_summaries, 
-                            schema_profile, thread_config
+                            agent, prompt,
+                            county_specialty_thresholds, entity_summaries,
+                            schema_profile, thread_config,
+                            max_steps=args.max_steps,
                         )
-            
-            
                         prompt = input("\n> ").strip()
-
-        if args.prompt:
-            run_agent_session(
-                agent, args.prompt, 
-                county_specialty_thresholds, entity_summaries, 
-                schema_profile, thread_config
-            )
+            except EOFError:
+                pass
 
 
     print("Goodbye!")

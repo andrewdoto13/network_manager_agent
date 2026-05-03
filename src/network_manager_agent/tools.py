@@ -59,10 +59,7 @@ def compute_coverage(
             net_df = pd.DataFrame()
         elif isinstance(network_input[0], str):
             dm = DataManager()
-            net_df = pd.DataFrame([
-                row for entity_id in network_input
-                for row in dm.get_providers_by_entity(entity_id).to_dict(orient="records")
-            ])
+            net_df = dm.get_candidates_df()[dm.get_candidates_df()["entity"].isin(network_input)]
         else:
             net_df = pd.DataFrame(network_input)
     else:
@@ -196,17 +193,50 @@ def run_code(
 
     Assign your result to 'result'. Returns as JSON.
     Allowed: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree.
-    Timeout: 20 seconds.
+    Timeout: 60 seconds.
     """
     dm = DataManager()
 
-    net_df = pd.DataFrame([
-        row for entity_id in network
-        for row in dm.get_providers_by_entity(entity_id).to_dict(orient="records")
-    ]) if network else pd.DataFrame()
+    net_df = dm.get_candidates_df()[dm.get_candidates_df()["entity"].isin(network)] if network else pd.DataFrame()
 
     sandbox_globals = {
-        "__builtins__": {},
+        "__builtins__": {
+            "__import__": __import__,
+            "len": len,
+            "sorted": sorted,
+            "range": range,
+            "str": str,
+            "int": int,
+            "float": float,
+            "bool": bool,
+            "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
+            "enumerate": enumerate,
+            "zip": zip,
+            "map": map,
+            "filter": filter,
+            "isinstance": isinstance,
+            "type": type,
+            "print": print,
+            "abs": abs,
+            "round": round,
+            "min": min,
+            "max": max,
+            "sum": sum,
+            "any": any,
+            "all": all,
+            "None": None,
+            "True": True,
+            "False": False,
+            "ValueError": ValueError,
+            "KeyError": KeyError,
+            "TypeError": TypeError,
+            "IndexError": IndexError,
+            "AttributeError": AttributeError,
+            "Exception": Exception,
+        },
         "pd": pd,
         "np": np,
         "json": json,
@@ -223,35 +253,54 @@ def run_code(
     }
 
     import threading
-    result_holder = {"value": None, "error": None}
+    import io
+    import sys
+    result_holder = {"value": None, "stdout": "", "error": None}
 
     def _execute():
         try:
+            old_stdout = sys.stdout
+            sys.stdout = captured = io.StringIO()
             exec(code, sandbox_globals)
+            result_holder["stdout"] = captured.getvalue()
+            sys.stdout = old_stdout
             result_holder["value"] = sandbox_globals.get("result")
         except TimeoutError as e:
             result_holder["error"] = f"Timeout: {str(e)}"
         except Exception as e:
             result_holder["error"] = f"{type(e).__name__}: {str(e)}"
+        finally:
+            sys.stdout = old_stdout
 
     thread = threading.Thread(target=_execute)
     thread.daemon = True
     thread.start()
-    thread.join(timeout=20.0)
+    thread.join(timeout=60.0)
 
     if thread.is_alive():
-        return "Error: Code execution timed out after 20 seconds."
+        return "Error: Code execution timed out after 60 seconds."
 
     if result_holder["error"]:
         return f"Error: {result_holder['error']}"
 
     result = result_holder["value"]
+    stdout = result_holder["stdout"].strip()
+
+    # Truncate stdout to prevent context flooding
+    _STDOUT_MAX = 2000
+    if len(stdout) > _STDOUT_MAX:
+        stdout = stdout[:_STDOUT_MAX] + f"\n... [output truncated, {len(stdout) - _STDOUT_MAX} more chars]"
+
     if isinstance(result, pd.DataFrame):
-        return result.to_dict(orient="records")
+        output = result.to_dict(orient="records")
     elif isinstance(result, (dict, list, str, int, float, bool, type(None))):
-        return result
+        output = result
     else:
-        return str(result)
+        output = str(result)
+
+    if stdout:
+        return f"[stdout]\n{stdout}\n[/stdout]\n{output}" if output else f"[stdout]\n{stdout}\n[/stdout]"
+    return output
 
 
 TOOLS = [add_contract_entity, run_code]
