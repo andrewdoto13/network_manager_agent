@@ -94,6 +94,10 @@ class DataManager:
             df[lat_col] = df[lat_col] / 1_000_000.0
             df[lon_col] = df[lon_col] / 1_000_000.0
 
+        # Flip positive longitudes to negative (Western hemisphere)
+        if df[lon_col].gt(0).any() and df[lon_col].lt(0).sum() == 0:
+            df[lon_col] = -df[lon_col]
+
     @staticmethod
     def _normalize_strings(df: pd.DataFrame) -> pd.DataFrame:
         """Strip whitespace and lowercase all string columns in-place."""

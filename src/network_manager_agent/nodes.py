@@ -64,11 +64,9 @@ CODE PATTERNS
 Copy-paste starting points for common tasks. Each is a self-contained run_code block.
 
 1) Geographic filtering — find providers within threshold miles of members in a county:
-   import numpy as np
-   from sklearn.neighbors import BallTree
-   county_members = members_df[members_df["county"].str.lower() == "washtenaw"]
-   cardio = candidates_df[candidates_df["specialty"].str.lower().isin(["cardiology"])]
-   tree = BallTree(np.deg2rad(cardio[["lat", "lon"]]), metric="haversine")
+    county_members = members_df[members_df["county"].str.lower() == "washtenaw"]
+    cardio = candidates_df[candidates_df["specialty"].str.lower().isin(["cardiology"])]
+    tree = BallTree(np.deg2rad(cardio[["lat", "lon"]]), metric="haversine")
    threshold_miles = thresholds["MI"]["washtenaw"]["cardiology"]
    radius_rad = threshold_miles / 3958.8
    nearby = tree.query_radius(np.deg2rad(county_members[["lat", "lon"]]), r=radius_rad)
@@ -83,11 +81,11 @@ Copy-paste starting points for common tasks. Each is a self-contained run_code b
    result = cardio.nlargest(5, "provider_count")[["entity", "provider_count", "avg_effectiveness", "avg_efficiency"]]
 
 3) Coverage simulation — test adding entities before committing:
-   new_entities = ["Entity A", "Entity B"]
-   new_providers = candidates_df[candidates_df["entity"].isin(new_entities)]
-   sim_net = pd.concat([network_df, new_providers])
-   coverage, errors = compute_coverage(sim_net, members_df, thresholds, candidates_df)
-   result = pd.DataFrame(coverage)
+    new_entities = ["Entity A", "Entity B"]
+    new_providers = candidates_df[candidates_df["entity"].str.lower().isin([e.lower() for e in new_entities])]
+    sim_net = pd.concat([network_df, new_providers])
+    coverage, errors = compute_coverage(sim_net, members_df, thresholds, candidates_df)
+    result = pd.DataFrame(coverage)
 
 4) Multi-specialty entities — find entities with ALL required specialties:
     required = {{"cardiology", "general practice"}}
@@ -99,7 +97,7 @@ Copy-paste starting points for common tasks. Each is a self-contained run_code b
 5) Coverage delta — compare baseline vs simulated:
     base_cov, _ = compute_coverage(network_df, members_df, thresholds, candidates_df)
     base_df = pd.DataFrame(base_cov)
-    new_providers = candidates_df[candidates_df["entity"].isin(["New Entity"])]
+    new_providers = candidates_df[candidates_df["entity"].str.lower() == "new entity"]
     sim_cov, _ = compute_coverage(pd.concat([network_df, new_providers]), members_df, thresholds, candidates_df)
     sim_df = pd.DataFrame(sim_cov)
     merged = pd.merge(base_df, sim_df, on=["state", "county", "specialty"], suffixes=("_base", "_sim"))
@@ -112,10 +110,11 @@ Copy-paste starting points for common tasks. Each is a self-contained run_code b
     candidates = ["Entity A", "Entity B", "Entity C"]
     comparisons = []
     for ent in candidates:
-        provs = candidates_df[candidates_df["entity"] == ent]
+        provs = candidates_df[candidates_df["entity"].str.lower() == ent.lower()]
         sim_net = pd.concat([network_df, provs])
         sim_cov, _ = compute_coverage(sim_net, members_df, thresholds, candidates_df)
         sim_df = pd.DataFrame(sim_cov)
+        
         merged = pd.merge(base_df, sim_df, on=["state", "county", "specialty"], suffixes=("_base", "_sim"))
         merged["delta_pp"] = merged["coverage_percentage_sim"] - merged["coverage_percentage_base"]
         merged["entity"] = ent
@@ -123,8 +122,6 @@ Copy-paste starting points for common tasks. Each is a self-contained run_code b
     result = pd.concat(comparisons)
 
 7) Isolate uncovered members — find members still lacking access for a given specialty:
-    import numpy as np
-    from sklearn.neighbors import BallTree
     county_members = members_df[members_df["county"].str.lower() == "wayne"]
     spec_providers = network_df[network_df["specialty"].str.lower() == "cardiology"]
     threshold_miles = thresholds["mi"]["wayne"]["cardiology"]
@@ -145,7 +142,7 @@ RULES
 5. Be decisive. After gathering sufficient data, present your findings. Do not repeat the same reasoning or simulations.
 6. If the user asks for analysis or recommendations — present your findings and stop. You may suggest entities or ask if the user wants to proceed, but do NOT call add_contract_entity in the same response.
 7. When building networks, present your best result with coverage numbers in your final message — do not keep exploring after you have a viable answer.
-8. run_code mechanics: each call is a fresh sandbox — variables from a previous call are NOT available. The schema is documented above — do NOT waste calls exploring column names. Assign your result to 'result'. Timeout is 60s. Allowed: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree.
+8. run_code mechanics: each call is a fresh sandbox — variables from a previous call are NOT available. The schema is documented above — do NOT waste calls exploring column names. Assign your result to 'result'. Timeout is 60s. Already imported as: pandas (as pd), numpy (as np), json, math, functools, itertools, collections, BallTree.
 9. When evaluating candidates for a coverage gap, simulate at least 2-3 options before recommending one. Use batch simulation (pattern 6) to compare their marginal impact side by side.
 10. After each simulation, identify which county/specialty combinations still have 0% or low coverage. Report these gaps explicitly and consider which uncovered members need access.
 '''

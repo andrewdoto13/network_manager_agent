@@ -59,7 +59,8 @@ def compute_coverage(
             net_df = pd.DataFrame()
         elif isinstance(network_input[0], str):
             dm = DataManager()
-            net_df = dm.get_candidates_df()[dm.get_candidates_df()["entity"].isin(network_input)]
+            candidates = dm.get_candidates_df()
+            net_df = candidates[candidates["entity"].str.lower().isin([e.lower() for e in network_input])]
         else:
             net_df = pd.DataFrame(network_input)
     else:
@@ -210,7 +211,7 @@ def run_code(
       Returns: (coverage_results, validation_errors)
 
     Assign your result to 'result'. Returns as JSON.
-    Allowed: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree.
+    Already imported as: pandas (as pd), numpy (as np), json, math, functools, itertools, collections, BallTree.
     Timeout: 60 seconds.
     """
     dm = DataManager()
@@ -261,6 +262,7 @@ def run_code(
         "functools": functools,
         "itertools": itertools,
         "defaultdict": defaultdict,
+        "BallTree": BallTree,
         "candidates_df": dm.get_candidates_df(),
         "entity_summaries_df": pd.DataFrame(entity_summaries) if entity_summaries else pd.DataFrame(),
         "network_df": net_df,

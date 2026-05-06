@@ -100,7 +100,7 @@
 
 ## Level 3 — Multi-Step Reasoning
 
-### Prompt 1: "Simulate adding the top 3 cardiology entities to the network and measure the coverage improvement for cardiology in Washtenaw county."
+### Prompt 1: "Simulate adding the top 3 cardiology entities (using a weighted score balanced for effectiveness and efficiency) to the network and measure the coverage improvement for cardiology in Washtenaw county."
 - **Status**: ✅ Success
 - **Tool calls**: 2 (identify top 3 + simulate coverage, then check baseline)
 - **Response cycles**: 2 tool calls → 1 final response
