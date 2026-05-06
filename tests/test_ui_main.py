@@ -37,7 +37,8 @@ class TestRunAgent:
         assert "Starting Agent Execution" in stdout.getvalue()
         assert "NODE: network_manager" in stdout.getvalue()
         assert "NODE: tools" in stdout.getvalue()
-        log_files = list(tmp_path.glob("*.txt"))
+        log_dir = tmp_path / "thread_test"
+        log_files = list(log_dir.glob("*.txt"))
         assert len(log_files) == 1
         log_content = log_files[0].read_text()
         assert "HUMAN INPUT" in log_content
@@ -58,7 +59,8 @@ class TestRunAgent:
             with patch("sys.stdout", new_callable=StringIO):
                 run_agent(mock_agent, inputs, config, output_dir=tmp_path)
 
-        log_files = list(tmp_path.glob("*.txt"))
+        log_dir = tmp_path / "thread_test"
+        log_files = list(log_dir.glob("*.txt"))
         assert len(log_files) == 1
 
     def test_logs_tool_calls_in_file(self, tmp_path, clean_data_manager):
@@ -85,7 +87,8 @@ class TestRunAgent:
             with patch("sys.stdout", new_callable=StringIO):
                 run_agent(mock_agent, inputs, config, output_dir=tmp_path)
 
-        log_files = list(tmp_path.glob("*.txt"))
+        log_dir = tmp_path / "thread_test"
+        log_files = list(log_dir.glob("*.txt"))
         log_content = log_files[0].read_text()
         assert "TOOL CALL" in log_content
         assert "run_code" in log_content

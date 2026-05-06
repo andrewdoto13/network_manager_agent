@@ -8,26 +8,26 @@ from network_manager_agent.data import DataManager
 
 @pytest.fixture
 def mock_candidates():
-    """Sample candidate provider records."""
+    """Sample candidate provider records (normalized to lowercase)."""
     return [
-        {"entity": "Health System A", "specialty": "cardiology", "effectiveness": 4.5, "efficiency": 0.85, "lat": 42.33, "lon": -83.05, "city": "Ann Arbor", "state": "MI", "county": "washtenaw"},
-        {"entity": "Health System A", "specialty": "general practice", "effectiveness": 4.2, "efficiency": 0.90, "lat": 42.34, "lon": -83.06, "city": "Ann Arbor", "state": "MI", "county": "washtenaw"},
-        {"entity": "Health System A", "specialty": "cardiology", "effectiveness": 4.0, "efficiency": 0.80, "lat": 42.35, "lon": -83.07, "city": "Ypsilanti", "state": "MI", "county": "washtenaw"},
-        {"entity": "MedCare B", "specialty": "general practice", "effectiveness": 3.8, "efficiency": 0.75, "lat": 42.32, "lon": -83.04, "city": "Ann Arbor", "state": "MI", "county": "washtenaw"},
-        {"entity": "MedCare B", "specialty": "cardiology", "effectiveness": 3.5, "efficiency": 0.70, "lat": 42.36, "lon": -83.08, "city": "Ypsilanti", "state": "MI", "county": "washtenaw"},
-        {"entity": "Regional Clinic C", "specialty": "general practice", "effectiveness": 4.8, "efficiency": 0.95, "lat": 42.37, "lon": -83.09, "city": "Saline", "state": "MI", "county": "washtenaw"},
+        {"entity": "health system a", "specialty": "cardiology", "effectiveness": 4.5, "efficiency": 0.85, "lat": 42.33, "lon": -83.05, "city": "ann arbor", "state": "mi", "county": "washtenaw"},
+        {"entity": "health system a", "specialty": "general practice", "effectiveness": 4.2, "efficiency": 0.90, "lat": 42.34, "lon": -83.06, "city": "ann arbor", "state": "mi", "county": "washtenaw"},
+        {"entity": "health system a", "specialty": "cardiology", "effectiveness": 4.0, "efficiency": 0.80, "lat": 42.35, "lon": -83.07, "city": "ypsilanti", "state": "mi", "county": "washtenaw"},
+        {"entity": "medcare b", "specialty": "general practice", "effectiveness": 3.8, "efficiency": 0.75, "lat": 42.32, "lon": -83.04, "city": "ann arbor", "state": "mi", "county": "washtenaw"},
+        {"entity": "medcare b", "specialty": "cardiology", "effectiveness": 3.5, "efficiency": 0.70, "lat": 42.36, "lon": -83.08, "city": "ypsilanti", "state": "mi", "county": "washtenaw"},
+        {"entity": "regional clinic c", "specialty": "general practice", "effectiveness": 4.8, "efficiency": 0.95, "lat": 42.37, "lon": -83.09, "city": "saline", "state": "mi", "county": "washtenaw"},
     ]
 
 
 @pytest.fixture
 def mock_members():
-    """Sample member records."""
+    """Sample member records (normalized to lowercase)."""
     return [
-        {"lat": 42.331, "lon": -83.046, "state": "MI", "county": "washtenaw"},
-        {"lat": 42.340, "lon": -83.055, "state": "MI", "county": "washtenaw"},
-        {"lat": 42.350, "lon": -83.065, "state": "MI", "county": "washtenaw"},
-        {"lat": 42.360, "lon": -83.075, "state": "MI", "county": "washtenaw"},
-        {"lat": 42.370, "lon": -83.085, "state": "MI", "county": "washtenaw"},
+        {"lat": 42.331, "lon": -83.046, "state": "mi", "county": "washtenaw"},
+        {"lat": 42.340, "lon": -83.055, "state": "mi", "county": "washtenaw"},
+        {"lat": 42.350, "lon": -83.065, "state": "mi", "county": "washtenaw"},
+        {"lat": 42.360, "lon": -83.075, "state": "mi", "county": "washtenaw"},
+        {"lat": 42.370, "lon": -83.085, "state": "mi", "county": "washtenaw"},
     ]
 
 
@@ -35,7 +35,7 @@ def mock_members():
 def mock_thresholds():
     """Sample county-specialty thresholds."""
     return {
-        "MI": {
+        "mi": {
             "washtenaw": {
                 "cardiology": 10.0,
                 "general practice": 20.0,

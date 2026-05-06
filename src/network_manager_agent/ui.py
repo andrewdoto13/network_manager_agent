@@ -1,10 +1,129 @@
 """UI utilities for running and displaying agent output."""
 
 import json
+import re
+import time
 from datetime import datetime
 from pathlib import Path
 
-from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+
+def _parse_tool_result(content: str) -> dict:
+    """Parse a run_code tool result into stdout and value fields.
+
+    run_code returns: "[stdout]\\n{stdout}\\n[/stdout]\\n{value}"
+    or just "[stdout]\\n{stdout}\\n[/stdout]"
+    or just the raw value (no [stdout] marker).
+    """
+    match = re.match(r"^\[stdout\]\n(.*?)\n\[/stdout\](?:\n(.+))?$", content, re.DOTALL)
+    if match:
+        return {"stdout": match.group(1), "value": match.group(2)}
+    return {"stdout": "", "value": content}
+
+
+def _fmt_ts(dt: datetime) -> str:
+    return dt.strftime("%H:%M:%S.%f")[:-3]
+
+
+def _fmt_iso(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _session_header(f_txt, f_jsonl, dt: datetime):
+    ts = _fmt_ts(dt)
+    f_txt.write(f"\n--- Session: {ts} ---\n\n")
+    f_jsonl.write(json.dumps({"session": ts}) + "\n")
+
+
+def _log_human(f_txt, f_jsonl, step: int, dt: datetime, msg: HumanMessage):
+    ts = _fmt_ts(dt)
+    content = msg.content.strip()
+    f_txt.write(f"[{ts}] STEP {step} | HUMAN INPUT\n")
+    f_txt.write(f"  {content}\n\n")
+    f_jsonl.write(json.dumps({
+        "step": step,
+        "timestamp": _fmt_iso(dt),
+        "actions": [{"type": "human_input", "content": content}]
+    }) + "\n")
+
+
+def _log_tool_call(f_txt, f_jsonl, step: int, dt: datetime, node: str,
+                   tool_name: str, tool_args: dict):
+    ts = _fmt_ts(dt)
+    f_txt.write(f"[{ts}] STEP {step} | {node}\n")
+    f_txt.write(f"  TOOL CALL: {tool_name}\n")
+    f_txt.write(f"    -> {tool_name}({json.dumps(tool_args, default=str)})\n\n")
+    f_jsonl.write(json.dumps({
+        "step": step,
+        "node": node,
+        "timestamp": _fmt_iso(dt),
+        "actions": [{"type": "tool_call", "tool": tool_name, "args": tool_args}]
+    }) + "\n")
+
+
+def _log_tool_result(f_txt, f_jsonl, step: int, dt: datetime, node: str,
+                     duration_ms: int, tool_name: str, stdout: str,
+                     value, error: str = None):
+    ts = _fmt_ts(dt)
+    f_txt.write(f"[{ts}] STEP {step} | {node} ({duration_ms // 1000}s)")
+    if error:
+        f_txt.write(", ERROR")
+    f_txt.write("\n")
+    f_txt.write(f"  TOOL RESULT: {tool_name}\n")
+    if stdout:
+        f_txt.write(f"    [stdout]\n{stdout}\n    [/stdout]\n")
+    if value is not None:
+        f_txt.write(f"    result: {value}\n")
+    f_txt.write("\n")
+    f_jsonl.write(json.dumps({
+        "step": step,
+        "node": node,
+        "timestamp": _fmt_iso(dt),
+        "duration_ms": duration_ms,
+        "actions": [{
+            "type": "tool_result",
+            "tool": tool_name,
+            "result": {"stdout": stdout, "value": value, "error": error}
+        }]
+    }) + "\n")
+
+
+def _log_ai_output(f_txt, f_jsonl, step: int, dt: datetime, node: str,
+                   duration_ms: int, content: str):
+    ts = _fmt_ts(dt)
+    f_txt.write(f"[{ts}] STEP {step} | {node} ({duration_ms // 1000}s)\n")
+    f_txt.write("  AI OUTPUT\n")
+    f_txt.write(f"    {content.strip()}\n\n")
+    f_jsonl.write(json.dumps({
+        "step": step,
+        "node": node,
+        "timestamp": _fmt_iso(dt),
+        "duration_ms": duration_ms,
+        "actions": [{"type": "ai_output", "content": content.strip()}]
+    }) + "\n")
+
+
+def _log_summary(f_txt, f_jsonl, dt: datetime, summary: str):
+    ts = _fmt_ts(dt)
+    f_txt.write(f"[{ts}] RUNNING SUMMARY\n")
+    f_txt.write(f"  {summary.strip()}\n\n")
+    f_jsonl.write(json.dumps({
+        "timestamp": _fmt_iso(dt),
+        "actions": [{"type": "summary", "content": summary.strip()}]
+    }) + "\n")
+
+
+def _log_stop(f_txt, f_jsonl, step: int, dt: datetime, total_ms: int, reason: str):
+    ts = _fmt_ts(dt)
+    f_txt.write(f"[{ts}] COMPLETE (total: {total_ms // 1000}s)\n")
+    f_txt.write(f"Stopped: {reason}\n")
+    f_jsonl.write(json.dumps({
+        "step": step,
+        "timestamp": _fmt_iso(dt),
+        "stop_reason": reason,
+        "total_duration_ms": total_ms
+    }) + "\n")
 
 
 def run_agent(
@@ -14,32 +133,42 @@ def run_agent(
     output_dir: Path | None = None,
     max_steps: int | None = None,
 ):
-    """Run the agent and stream output to console and a log file in real-time.
+    """Run the agent and stream output to console and log files in real-time.
 
     Args:
         agent: Compiled LangGraph agent.
-        inputs: Agent input dict with 'messages', 'candidates', 'members'.
+        inputs: Agent input dict with 'messages', 'county_specialty_thresholds', etc.
         config: LangGraph config dict with thread_id.
         output_dir: Directory to save action log. Defaults to current working directory.
         max_steps: Maximum number of node steps before auto-stopping. None = unlimited.
     """
     print("Starting Agent Execution...\n")
 
-    # Initialize log file
-    filename = f"react_agent_actions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    log_path = (output_dir or Path.cwd()) / filename
+    # Initialize log files in per-thread directory
+    thread_id = config['configurable']['thread_id']
+    log_dir = (output_dir or Path("logs")) / f"thread_{thread_id}"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    txt_path = log_dir / "log.txt"
+    jsonl_path = log_dir / "log.jsonl"
+
+    # Determine if we're appending to an existing log
+    append_mode = txt_path.exists()
+    total_start = time.time()
 
     stopped_reason = None
-    step_count = 1
+    step = 0
 
-    with open(log_path, "w", encoding="utf-8") as f:
-        f.write("=== AGENT ACTION LOG (REAL-TIME) ===\n\n")
+    with open(txt_path, "a", encoding="utf-8") as f_txt, \
+         open(jsonl_path, "a", encoding="utf-8") as f_jsonl:
+
+        if append_mode:
+            _session_header(f_txt, f_jsonl, datetime.now())
 
         # Log initial human input
         human_msgs = [m for m in inputs.get("messages", []) if isinstance(m, HumanMessage)]
         if human_msgs:
-            f.write("[STEP 0] HUMAN INPUT\n")
-            f.write(f"  {human_msgs[-1].content.strip()}\n\n")
+            _log_human(f_txt, f_jsonl, step, datetime.now(), human_msgs[-1])
+            step += 1
 
         try:
             for chunk in agent.stream(inputs, stream_mode="updates", config=config):
@@ -50,77 +179,110 @@ def run_agent(
                         continue
 
                     # Check step budget before processing
-                    if max_steps and step_count > max_steps:
+                    if max_steps and step > max_steps:
                         stopped_reason = f"max_steps ({max_steps})"
                         break
 
-                    # 1. Console Output
+                    # Console Output
                     print(f"\n>>>> NODE: {node_name} <<<<")
-
-                    # 2. File Log Output
-                    f.write(f"[STEP {step_count}] NODE: {node_name}\n")
 
                     if isinstance(output, dict) and "messages" in output:
                         for m in output["messages"]:
-                            # Console: Pretty print
-                            print("   --- CURRENT CONTENT ---")
-                            if isinstance(m, ToolMessage) and m.name == "add_contract_entity":
-                                content = m.content
-                                if isinstance(content, str):
-                                    try:
-                                        parsed = json.loads(content)
-                                        added = parsed.get("added_entities", [])
-                                        errors = parsed.get("errors", [])
-                                        print(f"   Added {len(added)} entities")
-                                        if errors:
-                                            print(f"   Errors: {', '.join(errors)}")
-                                    except json.JSONDecodeError:
-                                        m.pretty_print()
-                                else:
-                                    m.pretty_print()
-                            else:
-                                m.pretty_print()
-
-                            if hasattr(m, "tool_calls") and m.tool_calls:
-                                print("   --- TOOL CALL ---")
-                                for tc in m.tool_calls:
-                                    print(f"   -> {tc['name']}({json.dumps(tc['args'], default=str)})")
-
-                            # File: Log message content
                             if isinstance(m, AIMessage) and m.tool_calls:
-                                f.write("  AI -> TOOL CALL\n")
+                                # Tool call from AI
                                 for tc in m.tool_calls:
-                                    f.write(f"    -> {tc['name']}({json.dumps(tc['args'], default=str)})\n")
+                                    tool_name = tc['name']
+                                    tool_args = tc['args']
+
+                                    # Console
+                                    print("   --- TOOL CALL ---")
+                                    print(f"   -> {tool_name}({json.dumps(tool_args, default=str)})")
+
+                                    # File log
+                                    _log_tool_call(f_txt, f_jsonl, step, datetime.now(),
+                                                 node_name, tool_name, tool_args)
+
                             elif isinstance(m, ToolMessage):
+                                # Tool result
+                                elapsed_ms = int((time.time() - total_start) * 1000)
+                                total_start = time.time()  # reset for next step
+
                                 content = m.content
-                                if isinstance(content, list):
-                                    content = " ".join(str(c) for c in content)
-                                f.write(f"  TOOL RESULT ({m.name})\n")
-                                f.write(f"    {content.strip()}\n")
+                                parsed = _parse_tool_result(content) if isinstance(content, str) else {"stdout": "", "value": content}
+                                stdout = parsed.get("stdout", "")
+                                value = parsed.get("value", None)
+
+                                # Check for error in stdout
+                                error = None
+                                if stdout and "Error:" in stdout:
+                                    error = stdout
+
+                                # Console
+                                print(f"   --- TOOL RESULT ({m.name}) ---")
+                                if stdout:
+                                    print(f"    [stdout]\n{stdout}\n    [/stdout]")
+                                if value is not None:
+                                    print(f"    result: {value}")
+                                print()
+
+                                # File log
+                                _log_tool_result(f_txt, f_jsonl, step, datetime.now(),
+                                               node_name, elapsed_ms, m.name,
+                                               stdout, value, error)
+
+                                step += 1
+
                             elif isinstance(m, AIMessage):
+                                # AI text output
+                                elapsed_ms = int((time.time() - total_start) * 1000)
+                                total_start = time.time()
+
                                 content = m.content
                                 if isinstance(content, list):
                                     content = " ".join(str(c) for c in content)
                                 if content.strip():
-                                    f.write(f"  AI OUTPUT\n")
-                                    f.write(f"    {content.strip()}\n")
+                                    # Console
+                                    print("   --- CURRENT CONTENT ---")
+                                    m.pretty_print()
+                                    print()
+
+                                    # File log
+                                    _log_ai_output(f_txt, f_jsonl, step, datetime.now(),
+                                                 node_name, elapsed_ms, content)
+
+                                step += 1
+
                             elif isinstance(m, HumanMessage):
-                                f.write(f"  HUMAN INPUT\n")
-                                f.write(f"    {m.content.strip()}\n")
+                                # Console
+                                print("   --- CURRENT CONTENT ---")
+                                m.pretty_print()
+                                print()
 
-                            f.write("\n")
-
-                    f.write("\n")
-                    step_count += 1
+                                # File log
+                                _log_human(f_txt, f_jsonl, step, datetime.now(), m)
+                                step += 1
 
         except KeyboardInterrupt:
             stopped_reason = "user interrupted (Ctrl+C)"
 
-        if stopped_reason:
-            f.write(f"\n[STEP {step_count}] STOPPED: {stopped_reason}\n")
+        total_ms = int((time.time() - total_start) * 1000)
+
+        # Write running summary
+        try:
+            state = agent.get_state(config)
+            summary = state.values.get("summary", "")
+            if isinstance(summary, str) and summary.strip():
+                _log_summary(f_txt, f_jsonl, datetime.now(), summary)
+        except Exception:
+            pass
+
+        # Write stop marker
+        if not stopped_reason:
+            stopped_reason = "execution complete"
+        _log_stop(f_txt, f_jsonl, step, datetime.now(), total_ms, stopped_reason)
 
     if stopped_reason:
-        print(f"\n--- Stopped at step {step_count - 1}: {stopped_reason} ---")
+        print(f"\n--- Stopped at step {step - 1}: {stopped_reason} ---")
         print(f"Checkpoint saved. Resume with --thread-id {config['configurable']['thread_id']}")
     else:
-        print(f"\nExecution Complete. Detailed history saved to '{log_path}'")
+        print(f"\nExecution Complete. Detailed history saved to '{txt_path}'")

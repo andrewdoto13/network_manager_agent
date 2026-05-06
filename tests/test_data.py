@@ -82,6 +82,44 @@ class TestNormalizeCoordinates:
 
 
 # ---------------------------------------------------------------------------
+# String normalization
+# ---------------------------------------------------------------------------
+
+class TestNormalizeStrings:
+    def test_strips_whitespace(self):
+        df = pd.DataFrame({"entity": [" Corewell Health "], "city": [" Ann Arbor "]})
+        DataManager._normalize_strings(df)
+        assert df["entity"].iloc[0] == "corewell health"
+        assert df["city"].iloc[0] == "ann arbor"
+
+    def test_lowercases_all_string_columns(self):
+        df = pd.DataFrame({"entity": ["Health System A"], "state": ["MI"], "specialty": ["Cardiology"]})
+        DataManager._normalize_strings(df)
+        assert df["entity"].iloc[0] == "health system a"
+        assert df["state"].iloc[0] == "mi"
+        assert df["specialty"].iloc[0] == "cardiology"
+
+    def test_preserves_nan_values(self):
+        import numpy as np
+        df = pd.DataFrame({"entity": ["A", None, "B"]})
+        DataManager._normalize_strings(df)
+        assert df["entity"].iloc[0] == "a"
+        assert pd.isna(df["entity"].iloc[1])
+        assert df["entity"].iloc[2] == "b"
+
+    def test_leaves_numeric_columns_untouched(self):
+        df = pd.DataFrame({"entity": ["A"], "effectiveness": [4.5], "lat": [42.33]})
+        DataManager._normalize_strings(df)
+        assert df["effectiveness"].iloc[0] == 4.5
+        assert df["lat"].iloc[0] == 42.33
+
+    def test_no_op_on_empty_dataframe(self):
+        df = pd.DataFrame()
+        result = DataManager._normalize_strings(df)
+        assert result.empty
+
+
+# ---------------------------------------------------------------------------
 # Entity aggregation
 # ---------------------------------------------------------------------------
 
@@ -95,22 +133,22 @@ class TestAggregateEntities:
 
     def test_provider_counts(self, mock_candidates_df):
         result = DataManager.aggregate_entities(mock_candidates_df)
-        assert result.loc["Health System A", "provider_count"] == 3
-        assert result.loc["MedCare B", "provider_count"] == 2
-        assert result.loc["Regional Clinic C", "provider_count"] == 1
+        assert result.loc["health system a", "provider_count"] == 3
+        assert result.loc["medcare b", "provider_count"] == 2
+        assert result.loc["regional clinic c", "provider_count"] == 1
 
     def test_avg_effectiveness(self, mock_candidates_df):
         result = DataManager.aggregate_entities(mock_candidates_df)
-        assert abs(result.loc["Health System A", "avg_effectiveness"] - 4.23) < 0.01
+        assert abs(result.loc["health system a", "avg_effectiveness"] - 4.23) < 0.01
 
     def test_specialties_sorted_unique(self, mock_candidates_df):
         result = DataManager.aggregate_entities(mock_candidates_df)
-        specs = result.loc["Health System A", "specialties"]
+        specs = result.loc["health system a", "specialties"]
         assert specs == ["cardiology", "general practice"]
 
     def test_geographic_reach(self, mock_candidates_df):
         result = DataManager.aggregate_entities(mock_candidates_df)
-        assert result.loc["Health System A", "geographic_reach"] == 2
+        assert result.loc["health system a", "geographic_reach"] == 2
 
     def test_empty_input_list(self):
         result = DataManager.aggregate_entities([])
@@ -149,10 +187,10 @@ class TestBuildSchemaProfile:
         assert profile["value"]["median"] == 3.0
 
     def test_string_column_profile(self):
-        df = pd.DataFrame({"city": ["Ann Arbor", "Ann Arbor", "Ypsilanti"], "entity": ["a", "b", "c"]})
+        df = pd.DataFrame({"city": ["ann arbor", "ann arbor", "ypsilanti"], "entity": ["a", "b", "c"]})
         profile = DataManager.build_schema_profile(df)
         assert profile["city"]["unique_count"] == 2
-        assert "Ann Arbor" in profile["city"]["unique_values"]
+        assert "ann arbor" in profile["city"]["unique_values"]
 
     def test_list_column_profile(self):
         df = pd.DataFrame({
@@ -203,14 +241,14 @@ class TestFilterByServiceArea:
 
     def test_returns_all_entities_with_at_least_one_provider_in_bounds(self, mock_members_df, mock_thresholds):
         cdf = pd.DataFrame([
-            {"entity": "Near Entity", "specialty": "cardiology", "lat": 42.33, "lon": -83.05},
-            {"entity": "Split Entity", "specialty": "cardiology", "lat": 42.34, "lon": -83.06},
-            {"entity": "Split Entity", "specialty": "cardiology", "lat": 45.00, "lon": -90.00},
+            {"entity": "near entity", "specialty": "cardiology", "lat": 42.33, "lon": -83.05},
+            {"entity": "split entity", "specialty": "cardiology", "lat": 42.34, "lon": -83.06},
+            {"entity": "split entity", "specialty": "cardiology", "lat": 45.00, "lon": -90.00},
         ])
         filtered_cdf, _ = DataManager._filter_by_service_area(cdf, mock_members_df, mock_thresholds)
         entities = filtered_cdf["entity"].unique().tolist()
-        assert "Split Entity" in entities
-        assert len(filtered_cdf[filtered_cdf["entity"] == "Split Entity"]) == 2
+        assert "split entity" in entities
+        assert len(filtered_cdf[filtered_cdf["entity"] == "split entity"]) == 2
 
     def test_empty_members_returns_empty_candidates(self, mock_candidates_df, mock_thresholds):
         mdf = pd.DataFrame(columns=["lat", "lon", "state", "county"])

@@ -95,6 +95,14 @@ class DataManager:
             df[lon_col] = df[lon_col] / 1_000_000.0
             df.loc[df[lon_col] > 0, lon_col] *= -1
 
+    @staticmethod
+    def _normalize_strings(df: pd.DataFrame) -> pd.DataFrame:
+        """Strip whitespace and lowercase all string columns in-place."""
+        for col in df.select_dtypes(include=["object", "string"]).columns:
+            df[col] = df[col].astype(str).str.strip().str.lower()
+            df[col] = df[col].replace("nan", pd.NA)
+        return df
+
     # -----------------------------------------------------------------------
     # Aggregation & profiling
     # -----------------------------------------------------------------------
@@ -264,12 +272,11 @@ class DataManager:
             mdf = mdf.copy()
             mdf["state_lower"] = mdf["state"].astype(str).str.lower()
             mdf["county_lower"] = mdf["county"].astype(str).str.lower()
-            mask = mdf["state_lower"].isin(state_counties.keys())
-            for state_lower, counties in state_counties.items():
-                mask = mask | (
-                    (mdf["state_lower"] == state_lower)
-                    & (mdf["county_lower"].isin(counties))
-                )
+            all_target_counties = set().union(*state_counties.values())
+            mask = (
+                mdf["state_lower"].isin(state_counties.keys())
+                & mdf["county_lower"].isin(all_target_counties)
+            )
             mdf = mdf[mask].drop(columns=["state_lower", "county_lower"], errors="ignore")
         else:
             all_counties = set()
@@ -308,10 +315,12 @@ class DataManager:
         cdf_raw = pd.read_csv(self.candidates_path).reset_index().rename(columns={"index": "id"})
         self._normalize_columns(cdf_raw)
         self._normalize_coordinates(cdf_raw)
+        self._normalize_strings(cdf_raw)
 
         mdf_raw = pd.read_csv(self.members_path).reset_index().rename(columns={"index": "id"})
         self._normalize_columns(mdf_raw)
         self._normalize_coordinates(mdf_raw)
+        self._normalize_strings(mdf_raw)
 
         if not self.thresholds:
             self.candidates_df = cdf_raw

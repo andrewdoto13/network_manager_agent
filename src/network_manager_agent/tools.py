@@ -90,7 +90,25 @@ def compute_coverage(
     coverage_results = []
     for state_val, counties in county_specialty_thresholds.items():
         for county_val, specialties in counties.items():
-            group_pts = _deg2rad(members_df)
+            county_mask = members_df["county"].astype(str).str.lower() == county_val.lower()
+            if "state" in members_df.columns:
+                state_mask = members_df["state"].astype(str).str.lower() == state_val.lower()
+                county_mask = county_mask & state_mask
+            county_members = members_df[county_mask]
+
+            if county_members.empty:
+                for specialty, threshold in specialties.items():
+                    coverage_results.append({
+                        "state": state_val,
+                        "county": county_val,
+                        "specialty": specialty,
+                        "members_with_access": 0,
+                        "total_members": 0,
+                        "coverage_percentage": 0.0,
+                    })
+                continue
+
+            group_pts = _deg2rad(county_members)
 
             for specialty, threshold in specialties.items():
                 if spec_col and "specialty" in net_df.columns:
@@ -104,7 +122,7 @@ def compute_coverage(
                         "county": county_val,
                         "specialty": specialty,
                         "members_with_access": 0,
-                        "total_members": len(members_df),
+                        "total_members": len(county_members),
                         "coverage_percentage": 0.0,
                     })
                     continue
@@ -114,7 +132,7 @@ def compute_coverage(
                 indices, _ = tree.query_radius(group_pts, r=radius_rad, return_distance=True)
 
                 members_with_access = int(np.array([len(lst) > 0 for lst in indices]).sum())
-                total_members = len(members_df)
+                total_members = len(county_members)
                 coverage_percentage = round(members_with_access / total_members * 100, 2)
 
                 coverage_results.append({

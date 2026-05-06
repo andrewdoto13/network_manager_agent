@@ -55,7 +55,7 @@
     summarize_messages -> network_manager
     ```
 - **Summarization**: When message count exceeds `SUMMARIZE_THRESHOLD` (14), the `summarize_messages` node archives old messages into a running summary to manage context.
-- **Streaming UI**: `ui.py` provides real-time console output and writes timestamped action logs (`react_agent_actions_YYYYMMDD_HHMMSS.txt`) with per-step details.
+- **Streaming UI**: `ui.py` provides real-time console output and writes timestamped action logs (`logs/thread_<id>/agent_run_YYYY_MM_DD_HHMMSS.txt`) with per-step details.
 
 ## Important Notes
 - **State**: `AgentState` extends LangGraph's `MessagesState` (not a plain `TypedDict`). Fields: `network` (accumulated entity IDs), `summary` (running summary string), `county_specialty_thresholds`, `entity_summaries`, `schema_profile`.

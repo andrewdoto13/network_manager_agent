@@ -71,7 +71,7 @@ ENV/
 .ipynb_checkpoints
 
 # Project-specific
-react_agent_actions_*.txt
+logs/
 *.log
 checkpoints.sqlite
 

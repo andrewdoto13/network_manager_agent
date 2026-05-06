@@ -27,7 +27,7 @@ class TestComputeCoverage:
 
     def test_with_entity_ids(self, seeded_data_manager, mock_members_df, mock_thresholds):
         coverage, errors = compute_coverage(
-            ["Health System A"], mock_members_df, mock_thresholds
+            ["health system a"], mock_members_df, mock_thresholds
         )
         assert isinstance(coverage, list)
         for entry in coverage:
@@ -55,6 +55,43 @@ class TestComputeCoverage:
         assert coverage == []
         assert errors == []
 
+    def test_coverage_filters_by_county(self, seeded_data_manager):
+        """Members in other counties must be excluded from coverage calculation."""
+        members = pd.DataFrame([
+            {"lat": 42.00, "lon": -83.00, "state": "mi", "county": "washtenaw"},
+            {"lat": 42.01, "lon": -83.00, "state": "mi", "county": "washtenaw"},
+            {"lat": 43.00, "lon": -83.00, "state": "mi", "county": "oakland"},
+        ])
+        network = pd.DataFrame([
+            {"entity": "clinic", "specialty": "cardiology", "lat": 42.00, "lon": -83.00},
+        ])
+        thresholds = {"mi": {"washtenaw": {"cardiology": 20.0}}}
+        coverage, errors = compute_coverage(network, members, thresholds, network)
+        assert len(errors) == 0
+        card = [c for c in coverage if c["specialty"] == "cardiology"][0]
+        assert card["total_members"] == 2, "Should only count washtenaw members"
+        assert card["members_with_access"] == 2
+        assert card["coverage_percentage"] == 100.0
+
+    def test_coverage_exact_haversine_distance(self, seeded_data_manager):
+        """Hand-computed: at ~42deg lat, 0.0725 deg lat ~ 5mi, 0.2174 deg lat ~ 15mi."""
+        members = pd.DataFrame([
+            {"lat": 42.0000, "lon": -83.00, "state": "mi", "county": "washtenaw"},
+            {"lat": 42.0725, "lon": -83.00, "state": "mi", "county": "washtenaw"},
+            {"lat": 42.2174, "lon": -83.00, "state": "mi", "county": "washtenaw"},
+            {"lat": 43.0000, "lon": -83.00, "state": "mi", "county": "oakland"},
+        ])
+        network = pd.DataFrame([
+            {"entity": "clinic", "specialty": "cardiology", "lat": 42.0000, "lon": -83.00},
+        ])
+        thresholds = {"mi": {"washtenaw": {"cardiology": 10.0}}}
+        coverage, errors = compute_coverage(network, members, thresholds, network)
+        assert len(errors) == 0
+        card = [c for c in coverage if c["specialty"] == "cardiology"][0]
+        assert card["total_members"] == 3, "Only washtenaw members; oakland excluded"
+        assert card["members_with_access"] == 2, "0mi and ~5mi covered; ~15mi not"
+        assert card["coverage_percentage"] == 66.67
+
 
 # ---------------------------------------------------------------------------
 # add_contract_entity
@@ -63,36 +100,36 @@ class TestComputeCoverage:
 class TestAddContractEntity:
     def test_add_valid_entity(self, seeded_data_manager):
         result = add_contract_entity.invoke({
-            "entity_ids": ["Health System A"],
+            "entity_ids": ["health system a"],
             "network": [],
         })
-        assert "Health System A" in result["added_entities"]
+        assert "health system a" in result["added_entities"]
 
     def test_skip_duplicate(self, seeded_data_manager):
         result = add_contract_entity.invoke({
-            "entity_ids": ["Health System A"],
-            "network": ["Health System A"],
+            "entity_ids": ["health system a"],
+            "network": ["health system a"],
         })
         assert result["added_entities"] == []
 
     def test_invalid_entity_error(self, seeded_data_manager):
         result = add_contract_entity.invoke({
-            "entity_ids": ["Nonexistent Entity"],
+            "entity_ids": ["nonexistent entity"],
             "network": [],
         })
-        assert any("Nonexistent Entity" in e for e in result["errors"])
+        assert any("nonexistent entity" in e for e in result["errors"])
 
     def test_mixed_valid_invalid(self, seeded_data_manager):
         result = add_contract_entity.invoke({
-            "entity_ids": ["Health System A", "Nonexistent"],
+            "entity_ids": ["health system a", "nonexistent"],
             "network": [],
         })
-        assert "Health System A" in result["added_entities"]
+        assert "health system a" in result["added_entities"]
         assert len(result["errors"]) == 1
 
     def test_multiple_entities(self, seeded_data_manager):
         result = add_contract_entity.invoke({
-            "entity_ids": ["Health System A", "MedCare B", "Regional Clinic C"],
+            "entity_ids": ["health system a", "medcare b", "regional clinic c"],
             "network": [],
         })
         assert len(result["added_entities"]) == 3
