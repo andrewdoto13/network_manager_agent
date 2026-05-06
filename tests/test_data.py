@@ -60,7 +60,7 @@ class TestNormalizeColumns:
 
 class TestNormalizeCoordinates:
     def test_detects_and_normalizes_scaled_integers(self):
-        df = pd.DataFrame({"lat": [42331000], "lon": [83055000]})
+        df = pd.DataFrame({"lat": [42331000], "lon": [-83055000]})
         DataManager._normalize_coordinates(df)
         assert abs(df["lat"].iloc[0] - 42.331) < 0.01
         assert abs(df["lon"].iloc[0] - (-83.055)) < 0.01
@@ -74,11 +74,6 @@ class TestNormalizeCoordinates:
     def test_no_op_when_columns_missing(self):
         df = pd.DataFrame({"entity": ["A"]})
         DataManager._normalize_coordinates(df)
-
-    def test_flips_positive_longitude(self):
-        df = pd.DataFrame({"lat": [42331000], "lon": [83055000]})
-        DataManager._normalize_coordinates(df)
-        assert df["lon"].iloc[0] < 0
 
 
 # ---------------------------------------------------------------------------

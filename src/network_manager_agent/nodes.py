@@ -223,9 +223,7 @@ def update_state(state: AgentState):
                 if isinstance(parsed_output, dict):
                     added = parsed_output.get("added_entities", [])
                     if isinstance(added, list):
-                        new_entities.extend(added)
-                    else:
-                        new_entities.append(parsed_output)
+                        new_entities.extend([str(e) for e in added])
             except (json.JSONDecodeError, ValueError):
                 continue
 

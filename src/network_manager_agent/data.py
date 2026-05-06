@@ -93,7 +93,6 @@ class DataManager:
         if df[lat_col].abs().mean() > 1000:
             df[lat_col] = df[lat_col] / 1_000_000.0
             df[lon_col] = df[lon_col] / 1_000_000.0
-            df.loc[df[lon_col] > 0, lon_col] *= -1
 
     @staticmethod
     def _normalize_strings(df: pd.DataFrame) -> pd.DataFrame:
@@ -149,7 +148,7 @@ class DataManager:
                     else []
                 )
             )
-        if new_pat_col: agg_map[new_pat_col] = lambda x: float(round((x == 'Yes').mean() * 100, 2)) if not x.empty else None
+        if new_pat_col: agg_map[new_pat_col] = lambda x: float(round((x == 'yes').mean() * 100, 2)) if not x.empty else None
         if medicare_claims_vol_col:
             agg_map[medicare_claims_vol_col] = lambda x: {k: int(v) for k, v in x.dropna().value_counts().to_dict().items()}
         if total_claims_vol_col:
@@ -185,7 +184,7 @@ class DataManager:
             total_claims_vol_col: "total_claims_volume_dist" if total_claims_vol_col else None,
             city_col: "geographic_reach" if city_col else None,
             "_sum_total_claims_amount": "total_claims_amount",
-            "_sum_medicare_claims_amount": "total_medicare_claims_amount",
+            "_sum_medicare_total_claims_amount": "total_medicare_claims_amount",
         })
         return agg_df
 
@@ -217,7 +216,7 @@ class DataManager:
             else:
                 first_val = entity_df[col].dropna().iloc[0] if not entity_df[col].dropna().empty else None
                 if isinstance(first_val, (list, dict)):
-                    all_vals = [item for sublist in entity_df[col].dropna() for item in sublist]
+                    all_vals = [item for sublist in entity_df[col].dropna() for item in (sublist if isinstance(sublist, list) else sublist.keys() if isinstance(sublist, dict) else [sublist])]
                     unique_vals = sorted(list(set(all_vals)))
                     col_profile.update({
                         "unique_count": int(len(unique_vals)),

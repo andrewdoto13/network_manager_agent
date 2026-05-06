@@ -178,7 +178,7 @@ def add_contract_entity(
         if eid in used_entities:
             continue
 
-        match = candidates_df[candidates_df[entity_col] == eid] if entity_col in candidates_df.columns else pd.DataFrame()
+        match = candidates_df[candidates_df[entity_col] == eid.lower()] if entity_col in candidates_df.columns else pd.DataFrame()
         if match.empty:
             errors.append(f"Entity {eid} not found in candidates.")
         else:
@@ -219,7 +219,6 @@ def run_code(
 
     sandbox_globals = {
         "__builtins__": {
-            "__import__": __import__,
             "len": len,
             "sorted": sorted,
             "range": range,
@@ -283,8 +282,6 @@ def run_code(
             result_holder["stdout"] = captured.getvalue()
             sys.stdout = old_stdout
             result_holder["value"] = sandbox_globals.get("result")
-        except TimeoutError as e:
-            result_holder["error"] = f"Timeout: {str(e)}"
         except Exception as e:
             result_holder["error"] = f"{type(e).__name__}: {str(e)}"
         finally:

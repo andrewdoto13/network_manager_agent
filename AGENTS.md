@@ -44,7 +44,7 @@
 - **Schema Injection**: Statistical profiles of both entity-level and raw provider-level data are computed and injected directly into the system prompt in `nodes.py` to reduce tool-call overhead.
 - **Sandbox Simulation**: The agent uses the `run_code` tool to evaluate network changes. It can manipulate `candidates_df`, `entity_summaries_df`, `network_df`, `members_df` using pandas and compute coverage using the injected `compute_coverage` helper (uses `BallTree` for haversine distance queries).
 - **Core Tools**:
-    - `run_code`: The primary tool for discovery, custom filtering, data analysis, and "what-if" network simulations. Injected state: `network`, `entity_summaries`, `county_specialty_thresholds`. Allowed modules: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree. 20-second timeout.
+    - `run_code`: The primary tool for discovery, custom filtering, data analysis, and "what-if" network simulations. Injected state: `network`, `entity_summaries`, `county_specialty_thresholds`. Allowed modules: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree. 60-second timeout.
     - `add_contract_entity`: Commits entities to the network. Uses `InjectedState("network")` to read current network. Validates against candidates, skips duplicates.
 - **Graph Flow**:
     ```
@@ -55,7 +55,7 @@
     summarize_messages -> network_manager
     ```
 - **Summarization**: When message count exceeds `SUMMARIZE_THRESHOLD` (14), the `summarize_messages` node archives old messages into a running summary to manage context.
-- **Streaming UI**: `ui.py` provides real-time console output and writes timestamped action logs (`logs/thread_<id>/agent_run_YYYY_MM_DD_HHMMSS.txt`) with per-step details.
+- **Streaming UI**: `ui.py` provides real-time console output and writes action logs (`logs/thread_<id>/log.txt` and `logs/thread_<id>/log.jsonl`) with per-step details.
 
 ## Important Notes
 - **State**: `AgentState` extends LangGraph's `MessagesState` (not a plain `TypedDict`). Fields: `network` (accumulated entity IDs), `summary` (running summary string), `county_specialty_thresholds`, `entity_summaries`, `schema_profile`.
