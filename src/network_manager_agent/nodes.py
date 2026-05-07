@@ -60,91 +60,91 @@ candidates_df (provider-level): {cand_cols}
 members_df (member-level): {mem_cols}
 entity_summaries_df (per-entity): {ent_cols}
 
-CODE PATTERNS
-Copy-paste starting points for common tasks. Each is a self-contained run_code block.
+SANDBOX LIBRARIES
+Pre-imported in run_code: pandas (pd), numpy (np), json, math, functools, itertools, collections, sklearn.neighbors.BallTree (BallTree)
+Builtins: len, sorted, range, str, int, float, bool, set, list, dict, tuple, enumerate, zip, map, filter, isinstance, type, print, abs, round, min, max, sum, any, all
 
-1) Geographic filtering — find providers within threshold miles of members in a county:
-    county_members = members_df[members_df["county"].str.lower() == "washtenaw"]
-    cardio = candidates_df[candidates_df["specialty"].str.lower().isin(["cardiology"])]
-    tree = BallTree(np.deg2rad(cardio[["lat", "lon"]]), metric="haversine")
-   threshold_miles = thresholds["MI"]["washtenaw"]["cardiology"]
-   radius_rad = threshold_miles / 3958.8
-   nearby = tree.query_radius(np.deg2rad(county_members[["lat", "lon"]]), r=radius_rad)
-   covered = sum(len(i) > 0 for i in nearby)
-   result = f"{{covered}}/{{len(county_members)}} members covered"
-   # NOTE: use exact match ("cardiology"), not .str.contains() — "cardio" also matches "Cardiothoracic Surgery"
+SANDBOX FUNCTIONS
+compute_coverage(network_df, members_df, thresholds, candidates_df)
+  → (list[dict], list[str]) — list of {{state, county, specialty, members_with_access, total_members, coverage_percentage}} + validation errors
 
-2) Entity-level queries — filter and rank from entity_summaries_df:
-   mask = entity_summaries_df["avg_effectiveness"] >= 4.0
-   cardio = entity_summaries_df[mask & entity_summaries_df["specialties"].apply(
-       lambda x: any("cardiology" == s.lower() for s in x) if isinstance(x, list) else False)]
-   result = cardio.nlargest(5, "provider_count")[["entity", "provider_count", "avg_effectiveness", "avg_efficiency"]]
+COMMON PROCEDURES
+Self-contained run_code blocks for common tasks. Each is a complete, copy-paste starting point.
 
-3) Coverage simulation — test adding entities before committing:
-    new_entities = ["Entity A", "Entity B"]
-    new_providers = candidates_df[candidates_df["entity"].str.lower().isin([e.lower() for e in new_entities])]
-    sim_net = pd.concat([network_df, new_providers])
-    coverage, errors = compute_coverage(sim_net, members_df, thresholds, candidates_df)
-    result = pd.DataFrame(coverage)
-
-4) Multi-specialty entities — find entities with ALL required specialties:
-    required = {{"cardiology", "general practice"}}
+1) Rank multi-specialty candidates by marginal coverage:
+   # Derive required specialties from thresholds
+   required_specs = set()
+   for state_val, counties in thresholds.items():
+       for county_val, specs in counties.items():
+           required_specs.update(specs.keys())
    entity_specs = candidates_df.groupby("entity")["specialty"].apply(
        lambda x: set(x.str.lower().unique()))
-   multi = entity_specs[entity_specs.apply(lambda s: required.issubset(s))]
-   result = multi.index.tolist()
+   candidate_entities = entity_specs[entity_specs.apply(lambda s: required_specs.issubset(s))].index.tolist()
+   # First, extract uncovered members per county/specialty so we can rank
+   # by which entity covers the most uncovered members (faster than full simulation)
+   uncovered_by_spec = {{}}
+   for state_val, counties in thresholds.items():
+       for county_val, specs in counties.items():
+           county_members = members_df[members_df["county"].str.lower() == county_val.lower()]
+           if "state" in members_df.columns:
+               county_members = county_members[county_members["state"].str.lower() == state_val.lower()]
+           for spec, threshold_miles in specs.items():
+               key = (state_val, county_val, spec)
+               spec_providers = network_df[network_df["specialty"].str.lower() == spec.lower()]
+               radius_rad = threshold_miles / 3958.8
+               if not spec_providers.empty:
+                   tree = BallTree(np.deg2rad(spec_providers[["lat", "lon"]]), metric="haversine")
+                   nearby = tree.query_radius(np.deg2rad(county_members[["lat", "lon"]]), r=radius_rad)
+                   uncovered = county_members.iloc[[i for i, n in enumerate(nearby) if len(n) == 0]]
+               else:
+                   uncovered = county_members
+               uncovered_by_spec[key] = uncovered
+   # Now rank each candidate by how many uncovered members it would cover
+   rankings = []
+   for ent in candidate_entities:
+       ent_providers = candidates_df[candidates_df["entity"].str.lower() == ent.lower()]
+       total_newly_covered = 0
+       for state_val, counties in thresholds.items():
+           for county_val, specs in counties.items():
+               for spec, threshold_miles in specs.items():
+                   key = (state_val, county_val, spec)
+                   uncovered = uncovered_by_spec.get(key)
+                   if uncovered is None or uncovered.empty:
+                       continue
+                   ent_spec = ent_providers[ent_providers["specialty"].str.lower() == spec.lower()]
+                   if ent_spec.empty:
+                       continue
+                   radius_rad = threshold_miles / 3958.8
+                   tree = BallTree(np.deg2rad(ent_spec[["lat", "lon"]]), metric="haversine")
+                   nearby = tree.query_radius(np.deg2rad(uncovered[["lat", "lon"]]), r=radius_rad)
+                   total_newly_covered += sum(len(n) > 0 for n in nearby)
+       rankings.append({{"entity": ent, "newly_covered": total_newly_covered}})
+   result = sorted(rankings, key=lambda x: x["newly_covered"], reverse=True)
 
-5) Coverage delta — compare baseline vs simulated:
-    base_cov, _ = compute_coverage(network_df, members_df, thresholds, candidates_df)
-    base_df = pd.DataFrame(base_cov)
-    new_providers = candidates_df[candidates_df["entity"].str.lower() == "new entity"]
-    sim_cov, _ = compute_coverage(pd.concat([network_df, new_providers]), members_df, thresholds, candidates_df)
-    sim_df = pd.DataFrame(sim_cov)
-    merged = pd.merge(base_df, sim_df, on=["state", "county", "specialty"], suffixes=("_base", "_sim"))
-    merged["delta_pp"] = merged["coverage_percentage_sim"] - merged["coverage_percentage_base"]
-    result = merged[["county", "specialty", "coverage_percentage_base", "coverage_percentage_sim", "delta_pp"]]
+2) Simulate adding entities — test before committing:
+   new_entities = ["Entity A", "Entity B"]
+   new_providers = candidates_df[candidates_df["entity"].str.lower().isin([e.lower() for e in new_entities])]
+   sim_net = pd.concat([network_df, new_providers])
+   coverage, errors = compute_coverage(sim_net, members_df, thresholds, candidates_df)
+   result = pd.DataFrame(coverage)
 
-6) Batch simulation — compare multiple candidates side by side:
-    base_cov, _ = compute_coverage(network_df, members_df, thresholds, candidates_df)
-    base_df = pd.DataFrame(base_cov)
-    candidates = ["Entity A", "Entity B", "Entity C"]
-    comparisons = []
-    for ent in candidates:
-        provs = candidates_df[candidates_df["entity"].str.lower() == ent.lower()]
-        sim_net = pd.concat([network_df, provs])
-        sim_cov, _ = compute_coverage(sim_net, members_df, thresholds, candidates_df)
-        sim_df = pd.DataFrame(sim_cov)
-        
-        merged = pd.merge(base_df, sim_df, on=["state", "county", "specialty"], suffixes=("_base", "_sim"))
-        merged["delta_pp"] = merged["coverage_percentage_sim"] - merged["coverage_percentage_base"]
-        merged["entity"] = ent
-        comparisons.append(merged[["county", "specialty", "coverage_percentage_base", "coverage_percentage_sim", "delta_pp", "entity"]])
-    result = pd.concat(comparisons)
-
-7) Isolate uncovered members — find members still lacking access for a given specialty:
-    county_members = members_df[members_df["county"].str.lower() == "wayne"]
-    spec_providers = network_df[network_df["specialty"].str.lower() == "cardiology"]
-    threshold_miles = thresholds["mi"]["wayne"]["cardiology"]
-    radius_rad = threshold_miles / 3958.8
-    if not spec_providers.empty:
-        tree = BallTree(np.deg2rad(spec_providers[["lat", "lon"]]), metric="haversine")
-        nearby = tree.query_radius(np.deg2rad(county_members[["lat", "lon"]]), r=radius_rad)
-        uncovered = county_members.iloc[[i for i, n in enumerate(nearby) if len(n) == 0]]
-    else:
-        uncovered = county_members
-    result = {{"count": len(uncovered), "total": len(county_members), "lat_range": [float(uncovered["lat"].min()), float(uncovered["lat"].max())], "lon_range": [float(uncovered["lon"].min()), float(uncovered["lon"].max())]}}
+3) Compare coverage delta — baseline vs simulated for one entity:
+   base_cov, _ = compute_coverage(network_df, members_df, thresholds, candidates_df)
+   base_df = pd.DataFrame(base_cov)
+   new_providers = candidates_df[candidates_df["entity"].str.lower() == "new entity"]
+   sim_cov, _ = compute_coverage(pd.concat([network_df, new_providers]), members_df, thresholds, candidates_df)
+   sim_df = pd.DataFrame(sim_cov)
+   merged = pd.merge(base_df, sim_df, on=["state", "county", "specialty"], suffixes=("_base", "_sim"))
+   merged["delta_pp"] = merged["coverage_percentage_sim"] - merged["coverage_percentage_base"]
+   result = merged[["county", "specialty", "coverage_percentage_base", "coverage_percentage_sim", "delta_pp"]]
 
 RULES
 1. You may ONLY call add_contract_entity with valid entity names found in the data. Never invent entities, providers, or metrics.
-2. Use run_code with compute_coverage() to check current status or simulate changes. Create a temporary network by concatenating existing network with new candidates, then call compute_coverage(sim_net, members_df, thresholds, candidates_df).
-3. If required information is missing, ask the user for clarification instead of guessing.
-4. Always write a response in your final message. Never return an empty response. Summarize what was accomplished when complete.
-5. Be decisive. After gathering sufficient data, present your findings. Do not repeat the same reasoning or simulations.
-6. If the user asks for analysis or recommendations — present your findings and stop. You may suggest entities or ask if the user wants to proceed, but do NOT call add_contract_entity in the same response.
-7. When building networks, present your best result with coverage numbers in your final message — do not keep exploring after you have a viable answer.
-8. run_code mechanics: each call is a fresh sandbox — variables from a previous call are NOT available. The schema is documented above — do NOT waste calls exploring column names. Assign your result to 'result'. Timeout is 60s. Already imported as: pandas (as pd), numpy (as np), json, math, functools, itertools, collections, BallTree.
-9. When evaluating candidates for a coverage gap, simulate at least 2-3 options before recommending one. Use batch simulation (pattern 6) to compare their marginal impact side by side.
-10. After each simulation, identify which county/specialty combinations still have 0% or low coverage. Report these gaps explicitly and consider which uncovered members need access.
+2. If required information is missing, ask the user for clarification instead of guessing.
+3. Always write a response in your final message. Never return an empty response. Summarize what was accomplished when complete.
+4. Be decisive. Present your best result with coverage numbers and stop. Do not repeat the same simulations or keep exploring after finding a viable answer.
+5. If the user asks for analysis or recommendations — present your findings and stop. Do NOT call add_contract_entity in the same response.
+6. run_code mechanics: each call is a fresh sandbox — variables from a previous call are NOT available. The schema is documented above — do NOT waste calls exploring column names. Assign your result to 'result'. Timeout is 60s.
 '''
 
     messages_history = state.get("messages", [])

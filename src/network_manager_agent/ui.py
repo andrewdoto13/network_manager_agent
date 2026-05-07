@@ -8,6 +8,8 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from .config import PROJECT_ROOT
+
 
 def _parse_tool_result(content: str) -> dict:
     """Parse a run_code tool result into stdout and value fields.
@@ -139,14 +141,14 @@ def run_agent(
         agent: Compiled LangGraph agent.
         inputs: Agent input dict with 'messages', 'county_specialty_thresholds', etc.
         config: LangGraph config dict with thread_id.
-        output_dir: Directory to save action log. Defaults to current working directory.
+        output_dir: Directory to save action log. Defaults to project-root logs/.
         max_steps: Maximum number of node steps before auto-stopping. None = unlimited.
     """
     print("Starting Agent Execution...\n")
 
     # Initialize log files in per-thread directory
     thread_id = config['configurable']['thread_id']
-    log_dir = (output_dir or Path("logs")) / f"thread_{thread_id}"
+    log_dir = (output_dir or PROJECT_ROOT / "logs") / f"thread_{thread_id}"
     log_dir.mkdir(parents=True, exist_ok=True)
     txt_path = log_dir / "log.txt"
     jsonl_path = log_dir / "log.jsonl"

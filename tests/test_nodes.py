@@ -266,10 +266,9 @@ class TestNetworkManager:
 
         with patch("network_manager_agent.nodes.DataManager") as MockDM:
             mock_dm = MagicMock()
-            mock_dm.get_schema_profile.return_value = {"provider_count": {"type": "int64"}}
-            mock_dm.get_raw_candidate_schema_profile.return_value = {
-                "entity": {"type": "object", "unique_count": 100}
-            }
+            mock_dm.get_candidates_df.return_value.columns = ["entity", "specialty", "lat", "lon"]
+            mock_dm.get_members_df.return_value.columns = ["lat", "lon", "county", "state"]
+            mock_dm.entity_summaries_df.columns = ["entity", "provider_count", "avg_effectiveness"]
             MockDM.return_value = mock_dm
 
             network_manager(state, mock_llm)

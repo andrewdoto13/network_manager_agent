@@ -161,8 +161,9 @@ def add_contract_entity(
     """Add one or more contract entities to the network using their names.
 
     - entity_ids: List of entity names to add (e.g., ["Covenant Healthcare"]).
-    Returns a list of entity IDs added to the network. Entities already in the network
-    are silently skipped. Invalid entity names are reported in the 'errors' field.
+    Matching is case-insensitive. Entities already in the network are reported in
+    'skipped_entities'. Invalid entity names are reported in 'errors'.
+    Returns a dict with: added_entities (list), skipped_entities (list), errors (list).
     """
     dm = DataManager()
     candidates_df = dm.get_candidates_df()
@@ -171,21 +172,26 @@ def add_contract_entity(
         return "No candidate data available."
 
     entity_col = "entity" if "entity" in candidates_df.columns else None
-    used_entities = set(network)
+    used_entities_lower = {e.lower() for e in network}
     added_entities: list[str] = []
+    skipped_entities: list[str] = []
     errors: list[str] = []
 
     for eid in entity_ids:
-        if eid in used_entities:
+        if eid.lower() in used_entities_lower:
+            skipped_entities.append(eid)
             continue
 
         match = candidates_df[candidates_df[entity_col] == eid.lower()] if entity_col in candidates_df.columns else pd.DataFrame()
         if match.empty:
             errors.append(f"Entity {eid} not found in candidates.")
         else:
-            added_entities.append(eid)
+            canonical_name = match.iloc[0][entity_col]
+            added_entities.append(canonical_name)
 
     result: dict[str, Any] = {"added_entities": added_entities}
+    if skipped_entities:
+        result["skipped_entities"] = skipped_entities
     if errors:
         result["errors"] = errors
     return result
@@ -206,17 +212,22 @@ def run_code(
     - network_df: Currently contracted providers (DataFrame)
     - members_df: Member locations (DataFrame)
     - thresholds: Service area configuration (dict)
-    - compute_coverage: Helper function to calculate coverage.
+    - compute_coverage: Calculate per-county-and-specialty member coverage.
+      Use to check current status or simulate adding entities before committing.
       Usage: compute_coverage(network_df, members_df, thresholds, candidates_df)
-      Returns: (coverage_results, validation_errors)
+      Returns: (list[dict], list[str]) — each dict has state, county, specialty,
+      members_with_access, total_members, coverage_percentage.
 
     Assign your result to 'result'. Returns as JSON.
-    Already imported as: pandas (as pd), numpy (as np), json, math, functools, itertools, collections, BallTree.
     Timeout: 60 seconds.
     """
     dm = DataManager()
 
-    net_df = dm.get_candidates_df()[dm.get_candidates_df()["entity"].isin(network)] if network else dm.get_candidates_df().iloc[:0].copy()
+    candidates = dm.get_candidates_df()
+    if network:
+        net_df = candidates[candidates["entity"].str.lower().isin([e.lower() for e in network])]
+    else:
+        net_df = candidates.iloc[:0].copy()
 
     sandbox_globals = {
         "__builtins__": {

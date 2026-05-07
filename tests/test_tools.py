@@ -134,6 +134,29 @@ class TestAddContractEntity:
         })
         assert len(result["added_entities"]) == 3
 
+    def test_skip_duplicate_case_insensitive(self, seeded_data_manager):
+        result = add_contract_entity.invoke({
+            "entity_ids": ["Health System A"],
+            "network": ["health system a"],
+        })
+        assert result["added_entities"] == []
+        assert "Health System A" in result["skipped_entities"]
+
+    def test_stores_lowercase_canonical_name(self, seeded_data_manager):
+        result = add_contract_entity.invoke({
+            "entity_ids": ["Health System A"],
+            "network": [],
+        })
+        assert result["added_entities"] == ["health system a"]
+
+    def test_skipped_and_added_together(self, seeded_data_manager):
+        result = add_contract_entity.invoke({
+            "entity_ids": ["Health System A", "Medcare B"],
+            "network": ["health system a"],
+        })
+        assert result["added_entities"] == ["medcare b"]
+        assert "Health System A" in result["skipped_entities"]
+
 
 # ---------------------------------------------------------------------------
 # run_code
