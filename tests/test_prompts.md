@@ -56,7 +56,7 @@
 
 ## Level 1 — Basic Exploration
 
-**Thresholds**: `{"MI": {"washtenaw": {"cardiology": 10.0, "general practice": 20.0}}}`
+**Thresholds**: `{"MI": {"washtenaw": {"cardiology": 10.0, "general practice": 20.0, "orthopedic surgery": 15.0}, "wayne": {"cardiology": 10.0, "general practice": 20.0, "orthopedic surgery": 15.0}}}`
 
 ### Prompt 1: "What are the top 5 entities by provider count?"
 - **Status**: ✅ Success (after ui.py fix)
@@ -100,7 +100,7 @@
 
 ## Level 3 — Multi-Step Reasoning
 
-### Prompt 1: "Simulate adding the top 3 cardiology entities (using a weighted score balanced for effectiveness and efficiency) to the network and measure the coverage improvement for cardiology in Washtenaw county."
+### Prompt 1: "Simulate adding the top 3 cardiology entities in Washtenaw county (ranked by a composite score that balances effectiveness, efficiency, and provider count) to the network and measure the coverage improvement for cardiology in Washtenaw county."
 - **Status**: ✅ Success
 - **Tool calls**: 2 (identify top 3 + simulate coverage, then check baseline)
 - **Response cycles**: 2 tool calls → 1 final response

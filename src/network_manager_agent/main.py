@@ -2,17 +2,64 @@
 
 import argparse
 import json
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .config import LLMConfig, create_llm
 from .data import DataManager
 from .graph import build_agent
 from .ui import run_agent
-from langgraph.checkpoint.sqlite import SqliteSaver
+
+
+def _get_db_threads(db_path: str) -> set[str]:
+    """Get thread IDs from SQLite checkpoints database."""
+    if not Path(db_path).exists():
+        return set()
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT thread_id FROM checkpoints")
+        return {row[0] for row in cursor.fetchall()}
+
+
+def _get_log_threads(log_dir: Path) -> set[str]:
+    """Get thread IDs from logs directory."""
+    if not log_dir.exists():
+        return set()
+    threads = set()
+    for d in log_dir.iterdir():
+        if d.is_dir() and d.name.startswith("thread_"):
+            threads.add(d.name.replace("thread_", "", 1))
+    return threads
+
+
+def _clear_thread_state(thread_id: str, db_path: str, log_dir: Path) -> None:
+    """Delete checkpoint state and log directory for a thread."""
+    db_cleared = False
+    if Path(db_path).exists():
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+            cursor.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
+            conn.commit()
+        db_cleared = True
+
+    log_cleared = False
+    thread_log = log_dir / f"thread_{thread_id}"
+    if thread_log.exists():
+        shutil.rmtree(thread_log)
+        log_cleared = True
+
+    if db_cleared:
+        print(f"Cleared checkpoint state for thread: {thread_id}")
+    if log_cleared:
+        print(f"Deleted log directory: {thread_log}")
+    if not db_cleared and not log_cleared:
+        print(f"No state or logs found for thread: {thread_id}")
 
 
 def run_agent_session(
@@ -27,7 +74,7 @@ def run_agent_session(
         "schema_profile": profile,
     }
     run_agent(agent, inputs, thread_config, max_steps=max_steps)
-    
+
     state = agent.get_state(thread_config)
     summary = state.values.get("summary", "")
     if summary:
@@ -105,41 +152,45 @@ def main():
     args = parser.parse_args()
 
     db_path = "checkpoints.sqlite"
+    log_dir = Path("logs")
 
     # Handle management commands before loading data/agent
     if args.clear_all:
-        import os
-        if os.path.exists(db_path):
-            os.remove(db_path)
+        db_cleared = False
+        if Path(db_path).exists():
+            Path(db_path).unlink()
+            db_cleared = True
+        log_cleared = False
+        if log_dir.exists():
+            shutil.rmtree(log_dir)
+            log_cleared = True
+        if db_cleared:
             print(f"Wiped persistence database: {db_path}")
+        if log_cleared:
+            print(f"Deleted log directory: {log_dir}")
+        if not db_cleared and not log_cleared:
+            print("No persistence database or logs found.")
         sys.exit(0)
 
     if args.list_threads:
-        if not Path(db_path).exists():
-            print("No persistence database found.")
-            sys.exit(0)
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT thread_id FROM checkpoints")
-            threads = cursor.fetchall()
-            if threads:
-                print("Available Threads:")
-                for t in threads:
-                    print(f" - {t[0]}")
-            else:
-                print("No threads found in database.")
+        db_threads = _get_db_threads(db_path)
+        log_threads = _get_log_threads(log_dir)
+        all_threads = sorted(db_threads | log_threads)
+        if all_threads:
+            print("Available Threads:")
+            for t in all_threads:
+                tags = ""
+                if t in db_threads:
+                    tags += " [checkpoint]"
+                if t in log_threads:
+                    tags += " [log]"
+                print(f" - {t}{tags}")
+        else:
+            print("No threads found.")
         sys.exit(0)
 
     if args.clear_thread:
-        if not Path(db_path).exists():
-            print("No persistence database found.")
-            sys.exit(0)
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (args.clear_thread,))
-            cursor.execute("DELETE FROM writes WHERE thread_id = ?", (args.clear_thread,))
-            conn.commit()
-            print(f"Cleared all state for thread: {args.clear_thread}")
+        _clear_thread_state(args.clear_thread, db_path, log_dir)
         sys.exit(0)
 
     # Validate required args (management commands bypass this check above)
@@ -174,7 +225,7 @@ def main():
         members_path=args.members,
         county_specialty_thresholds=county_specialty_thresholds,
     )
-    
+
     entity_summaries = dm.get_entity_summaries()
     schema_profile = json.dumps(dm.get_schema_profile(), indent=2)
 

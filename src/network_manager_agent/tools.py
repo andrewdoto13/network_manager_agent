@@ -216,7 +216,7 @@ def run_code(
     """
     dm = DataManager()
 
-    net_df = dm.get_candidates_df()[dm.get_candidates_df()["entity"].isin(network)] if network else pd.DataFrame()
+    net_df = dm.get_candidates_df()[dm.get_candidates_df()["entity"].isin(network)] if network else dm.get_candidates_df().iloc[:0].copy()
 
     sandbox_globals = {
         "__builtins__": {
