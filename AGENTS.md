@@ -41,11 +41,12 @@
 ## Key Logic & Patterns
 - **DataManager Singleton**: Centralized data loading with `reset()` for testing. Handles column name synonym resolution (15 canonical columns), coordinate normalization (detects scaled integers, flips positive longitude), and service area geographic filtering via bounding box.
 - **Entity-Level Aggregation**: Provider-level candidate data is aggregated into entity-level summaries (e.g., `provider_count`, `avg_effectiveness`, `avg_efficiency`, `specialties`, `new_patient_rate`, `geographic_reach`, claims volume distributions) before being presented to the agent.
-- **Schema Injection**: Statistical profiles of both entity-level and raw provider-level data are computed and injected directly into the system prompt in `nodes.py` to reduce tool-call overhead.
+- **System Prompt Structure**: `nodes.py` injects: ROLE, NETWORK SCOPE (dynamic thresholds), DATA (DataFrame column names), SANDBOX LIBRARIES (pre-imported modules + builtins), SANDBOX FUNCTIONS (`compute_coverage` signature/return schema), COMMON PROCEDURES (3 copy-paste code blocks), and RULES (6 guardrails).
 - **Sandbox Simulation**: The agent uses the `run_code` tool to evaluate network changes. It can manipulate `candidates_df`, `entity_summaries_df`, `network_df`, `members_df` using pandas and compute coverage using the injected `compute_coverage` helper (uses `BallTree` for haversine distance queries).
+- **Common Procedures**: 3 copy-paste code blocks in the system prompt: (1) Rank multi-specialty candidates by marginal coverage via uncovered members, (2) Simulate adding entities before committing, (3) Compare coverage delta baseline vs simulated.
 - **Core Tools**:
     - `run_code`: The primary tool for discovery, custom filtering, data analysis, and "what-if" network simulations. Injected state: `network`, `entity_summaries`, `county_specialty_thresholds`. Allowed modules: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree. 60-second timeout.
-    - `add_contract_entity`: Commits entities to the network. Uses `InjectedState("network")` to read current network. Validates against candidates, skips duplicates.
+    - `add_contract_entity`: Commits entities to the network. Uses `InjectedState("network")` to read current network. Case-insensitive matching, stores lowercase canonical name. Returns `added_entities`, `skipped_entities`, `errors`.
 - **Graph Flow**:
     ```
     START -> network_manager
@@ -55,10 +56,10 @@
     summarize_messages -> network_manager
     ```
 - **Summarization**: When message count exceeds `SUMMARIZE_THRESHOLD` (14), the `summarize_messages` node archives old messages into a running summary to manage context.
-- **Streaming UI**: `ui.py` provides real-time console output and writes action logs (`logs/thread_<id>/log.txt` and `logs/thread_<id>/log.jsonl`) with per-step details.
+- **Streaming UI**: `ui.py` provides real-time console output and writes action logs (`logs/thread_<id>/log.txt` and `logs/thread_<id>/log.jsonl`) with per-step details. Default log directory uses `PROJECT_ROOT / "logs"` so logs are consistent regardless of CWD (CLI vs notebook).
 
 ## Important Notes
 - **State**: `AgentState` extends LangGraph's `MessagesState` (not a plain `TypedDict`). Fields: `network` (accumulated entity IDs), `summary` (running summary string), `county_specialty_thresholds`, `entity_summaries`, `schema_profile`.
 - **Tools**: Only 2 tools exist: `run_code` and `add_contract_entity`. `compute_coverage` is a plain function injected into the `run_code` sandbox, not a standalone tool.
 - **Data**: Data loading is centralized in `data.py` via the `DataManager` singleton. Accessors: `get_candidates_df()`, `get_members_df()`, `get_entity_summaries()`, `get_schema_profile()`, `get_raw_candidate_schema_profile()`, `get_providers_by_entity()`.
-- **Tests**: Comprehensive test suite across 6 files (~70+ tests): `test_data.py`, `test_graph.py`, `test_nodes.py`, `test_tools.py`, `test_ui_main.py`, with shared fixtures in `conftest.py`.
+- **Tests**: Comprehensive test suite across 6 files (113 tests): `test_data.py`, `test_graph.py`, `test_nodes.py`, `test_tools.py`, `test_ui_main.py`, with shared fixtures in `conftest.py`.
