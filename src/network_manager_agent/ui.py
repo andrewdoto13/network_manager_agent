@@ -146,7 +146,10 @@ def _log_tool_result(f_txt, f_jsonl, step: int, dt: datetime, node: str,
     if stdout:
         f_txt.write(f"    [stdout]\n{stdout}\n    [/stdout]\n")
     if value is not None:
-        f_txt.write(f"    result: {_truncate_value(value)}\n")
+        if tool_name == "run_code":
+            f_txt.write(f"{_truncate_value(_format_result(value))}\n")
+        else:
+            f_txt.write(f"    result: {value}\n")
     f_txt.write("\n")
     f_jsonl.write(json.dumps({
         "step": step,
