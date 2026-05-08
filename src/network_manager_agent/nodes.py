@@ -61,8 +61,10 @@ members_df (member-level): {mem_cols}
 entity_summaries_df (per-entity): {ent_cols}
 
 SANDBOX LIBRARIES
-Pre-imported in run_code: pandas (pd), numpy (np), json, math, functools, itertools, collections, sklearn.neighbors.BallTree (BallTree)
+The following are ALREADY AVAILABLE in run_code — DO NOT use import statements:
+  pd (pandas), np (numpy), json, math, functools, itertools, collections, BallTree
 Builtins: len, sorted, range, str, int, float, bool, set, list, dict, tuple, enumerate, zip, map, filter, isinstance, type, print, abs, round, min, max, sum, any, all
+** import is DISABLED and will raise ImportError. **
 
 SANDBOX FUNCTIONS
 compute_coverage(network_df, members_df, thresholds, candidates_df)
@@ -144,7 +146,7 @@ RULES
 3. Always write a response in your final message. Never return an empty response. Summarize what was accomplished when complete.
 4. Be decisive. Present your best result with coverage numbers and stop. Do not repeat the same simulations or keep exploring after finding a viable answer.
 5. If the user asks for analysis or recommendations — present your findings and stop. Do NOT call add_contract_entity in the same response.
-6. run_code mechanics: each call is a fresh sandbox — variables from a previous call are NOT available. The schema is documented above — do NOT waste calls exploring column names. Assign your result to 'result'. Timeout is 60s.
+6. run_code mechanics: each call is a fresh sandbox — variables from a previous call are NOT available. NO import statements — all libraries are pre-injected. The schema is documented above — do NOT waste calls exploring column names. Assign your result to 'result'. Timeout is 60s.
 '''
 
     messages_history = state.get("messages", [])

@@ -10,7 +10,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from .config import LLMConfig, create_llm
+from .config import LLMConfig, PROJECT_ROOT, create_llm
 from .data import DataManager
 from .graph import build_agent
 from .ui import run_agent
@@ -45,6 +45,8 @@ def _clear_thread_state(thread_id: str, db_path: str, log_dir: Path) -> None:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
             cursor.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
+            cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            cursor.execute("VACUUM")
             conn.commit()
         db_cleared = True
 
@@ -152,13 +154,17 @@ def main():
     args = parser.parse_args()
 
     db_path = "checkpoints.sqlite"
-    log_dir = Path("logs")
+    log_dir = PROJECT_ROOT / "logs"
 
     # Handle management commands before loading data/agent
     if args.clear_all:
         db_cleared = False
         if Path(db_path).exists():
-            Path(db_path).unlink()
+            db_path_obj = Path(db_path)
+            for suffix in ["", "-wal", "-shm"]:
+                f = db_path_obj.with_suffix(db_path_obj.suffix + suffix)
+                if f.exists():
+                    f.unlink()
             db_cleared = True
         log_cleared = False
         if log_dir.exists():

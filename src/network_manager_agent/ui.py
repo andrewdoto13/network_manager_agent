@@ -24,6 +24,72 @@ def _parse_tool_result(content: str) -> dict:
     return {"stdout": "", "value": content}
 
 
+def _try_parse_value(value):
+    """Try to parse a string value as JSON, handling numpy repr fallback."""
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    try:
+        fixed = value.replace("np.int64(", "").replace("np.float64(", "")
+        fixed = fixed.replace("np.bool_(True)", "true").replace("np.bool_(False)", "false")
+        fixed = fixed.replace("True", "true").replace("False", "false").replace("None", "null")
+        fixed = re.sub(r"'([^']*)'", r'"\1"', fixed)
+        return json.loads(fixed)
+    except (json.JSONDecodeError, TypeError):
+        return value
+
+
+_VALUE_MAX = 2000
+
+
+def _truncate_value(value, max_len=_VALUE_MAX):
+    s = str(value)
+    if len(s) > max_len:
+        return s[:max_len] + f"\n... [truncated, {len(s) - max_len} more chars]"
+    return s
+
+
+def _format_code(code: str) -> str:
+    """Format run_code submitted code as an indented block."""
+    lines = code.strip().split("\n")
+    return "\n".join(f"    {line}" for line in lines)
+
+
+def _format_dict_table(records: list[dict]) -> str:
+    """Format list[dict] as an ASCII table."""
+    if not records:
+        return "    (empty result)"
+    keys = list(records[0].keys())
+    widths = {k: max(len(k), max(len(str(r.get(k, ""))) for r in records)) for k in keys}
+    header = "    " + " | ".join(k.ljust(widths[k]) for k in keys)
+    separator = "   " + "-+-".join("-" * widths[k] for k in keys)
+    rows = []
+    for rec in records:
+        row = "    " + " | ".join(str(rec.get(k, "")).ljust(widths[k]) for k in keys)
+        rows.append(row)
+    return f"{header}\n{separator}\n" + "\n".join(rows)
+
+
+def _format_result(value) -> str:
+    """Format run_code result for console display."""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return _format_result(parsed)
+        except (json.JSONDecodeError, TypeError):
+            return f"    result: {value}"
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return _format_dict_table(value)
+    if isinstance(value, (dict, list)):
+        return "    result:\n" + "\n".join(
+            f"    {line}" for line in json.dumps(value, indent=2, default=str).split("\n")
+        )
+    return f"    result: {value}"
+
+
 def _fmt_ts(dt: datetime) -> str:
     return dt.strftime("%H:%M:%S.%f")[:-3]
 
@@ -55,7 +121,11 @@ def _log_tool_call(f_txt, f_jsonl, step: int, dt: datetime, node: str,
     ts = _fmt_ts(dt)
     f_txt.write(f"[{ts}] STEP {step} | {node}\n")
     f_txt.write(f"  TOOL CALL: {tool_name}\n")
-    f_txt.write(f"    -> {tool_name}({json.dumps(tool_args, default=str)})\n\n")
+    if tool_name == "run_code":
+        code = tool_args.get("code", "")
+        f_txt.write(f"    ```\n{_format_code(code)}\n    ```\n\n")
+    else:
+        f_txt.write(f"    -> {tool_name}({json.dumps(tool_args, default=str)})\n\n")
     f_jsonl.write(json.dumps({
         "step": step,
         "node": node,
@@ -76,7 +146,7 @@ def _log_tool_result(f_txt, f_jsonl, step: int, dt: datetime, node: str,
     if stdout:
         f_txt.write(f"    [stdout]\n{stdout}\n    [/stdout]\n")
     if value is not None:
-        f_txt.write(f"    result: {value}\n")
+        f_txt.write(f"    result: {_truncate_value(value)}\n")
     f_txt.write("\n")
     f_jsonl.write(json.dumps({
         "step": step,
@@ -86,7 +156,7 @@ def _log_tool_result(f_txt, f_jsonl, step: int, dt: datetime, node: str,
         "actions": [{
             "type": "tool_result",
             "tool": tool_name,
-            "result": {"stdout": stdout, "value": value, "error": error}
+            "result": {"stdout": stdout, "value": _truncate_value(_try_parse_value(value)), "error": error}
         }]
     }) + "\n")
 
@@ -155,7 +225,8 @@ def run_agent(
 
     # Determine if we're appending to an existing log
     append_mode = txt_path.exists()
-    total_start = time.time()
+    session_start = time.time()
+    step_start = session_start
 
     stopped_reason = None
     step = 0
@@ -197,8 +268,12 @@ def run_agent(
                                     tool_args = tc['args']
 
                                     # Console
-                                    print("   --- TOOL CALL ---")
-                                    print(f"   -> {tool_name}({json.dumps(tool_args, default=str)})")
+                                    if tool_name == "run_code":
+                                        print("   --- TOOL CALL: run_code ---")
+                                        print(_format_code(tool_args.get("code", "")))
+                                    else:
+                                        print("   --- TOOL CALL ---")
+                                        print(f"   -> {tool_name}({json.dumps(tool_args, default=str)})")
 
                                     # File log
                                     _log_tool_call(f_txt, f_jsonl, step, datetime.now(),
@@ -206,8 +281,8 @@ def run_agent(
 
                             elif isinstance(m, ToolMessage):
                                 # Tool result
-                                elapsed_ms = int((time.time() - total_start) * 1000)
-                                total_start = time.time()  # reset for next step
+                                elapsed_ms = int((time.time() - step_start) * 1000)
+                                step_start = time.time()
 
                                 content = m.content
                                 parsed = _parse_tool_result(content) if isinstance(content, str) else {"stdout": "", "value": content}
@@ -224,7 +299,10 @@ def run_agent(
                                 if stdout:
                                     print(f"    [stdout]\n{stdout}\n    [/stdout]")
                                 if value is not None:
-                                    print(f"    result: {value}")
+                                    if m.name == "run_code":
+                                        print(_format_result(value))
+                                    else:
+                                        print(f"    result: {value}")
                                 print()
 
                                 # File log
@@ -236,8 +314,8 @@ def run_agent(
 
                             elif isinstance(m, AIMessage):
                                 # AI text output
-                                elapsed_ms = int((time.time() - total_start) * 1000)
-                                total_start = time.time()
+                                elapsed_ms = int((time.time() - step_start) * 1000)
+                                step_start = time.time()
 
                                 content = m.content
                                 if isinstance(content, list):
@@ -267,7 +345,7 @@ def run_agent(
         except KeyboardInterrupt:
             stopped_reason = "user interrupted (Ctrl+C)"
 
-        total_ms = int((time.time() - total_start) * 1000)
+        total_ms = int((time.time() - session_start) * 1000)
 
         # Write running summary
         try:

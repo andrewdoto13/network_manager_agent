@@ -3,6 +3,7 @@
 import json
 import math
 
+import collections
 import functools
 import itertools
 from collections import defaultdict
@@ -16,6 +17,14 @@ from langgraph.prebuilt import InjectedState
 from typing import Annotated
 
 from .data import DataManager
+
+
+def _blocked_import(name: str, *args, **kwargs):
+    raise ImportError(
+        "import is disabled. Use pre-injected modules: "
+        "pd (pandas), np (numpy), json, math, BallTree, collections. "
+        "Do NOT write 'import' statements."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +274,7 @@ def run_code(
             "IndexError": IndexError,
             "AttributeError": AttributeError,
             "Exception": Exception,
+            "__import__": _blocked_import,
         },
         "pd": pd,
         "np": np,
@@ -272,6 +282,7 @@ def run_code(
         "math": math,
         "functools": functools,
         "itertools": itertools,
+        "collections": collections,
         "defaultdict": defaultdict,
         "BallTree": BallTree,
         "candidates_df": dm.get_candidates_df(),
