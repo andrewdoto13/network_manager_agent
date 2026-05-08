@@ -4,16 +4,15 @@ import json
 from typing import Any
 
 from langchain_core.messages import (
-    SystemMessage,
+    AIMessage,
     HumanMessage,
     RemoveMessage,
-    AIMessage,
+    SystemMessage,
     ToolMessage,
 )
-from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import ToolNode
 
-from .config import SUMMARIZE_THRESHOLD, MESSAGES_TO_ARCHIVE
+from .config import MESSAGES_TO_ARCHIVE, SUMMARIZE_THRESHOLD, ChatOpenAIWithReasoning
 from .data import DataManager
 from .state import AgentState
 from .tools import TOOLS
@@ -27,7 +26,7 @@ def _get_anchor_message(state: AgentState) -> str:
     return "Please continue."
 
 
-def network_manager(state: AgentState, llm: ChatOpenAI):
+def network_manager(state: AgentState, llm: ChatOpenAIWithReasoning):
     """The main LLM reasoning node that decides which tools to call."""
     dm = DataManager()
     county_specialty_thresholds = state.get("county_specialty_thresholds", {})
@@ -236,20 +235,20 @@ def _get_content(m: Any) -> str:
     return str(m.content)
 
 
-def summarize_messages(state: AgentState, llm: ChatOpenAI):
+def summarize_messages(state: AgentState, llm: ChatOpenAIWithReasoning):
     """Summarize old messages to manage context window size."""
     messages = state["messages"]
     existing_summary = state.get("summary", "")
- 
+
     last_message_to_summarize = MESSAGES_TO_ARCHIVE - 1
- 
+
     if (last_message_to_summarize + 1 < len(messages) and
         isinstance(messages[last_message_to_summarize], AIMessage) and
         isinstance(messages[last_message_to_summarize + 1], ToolMessage)):
         last_message_to_summarize += 1
- 
+
     to_summarize = messages[:last_message_to_summarize + 1]
- 
+
     instruction = f"""You are a task summarizer. Update the existing summary based on the new history provided below.
 
     EXISTING SUMMARY:
@@ -270,12 +269,12 @@ def summarize_messages(state: AgentState, llm: ChatOpenAI):
     6. When listing entities, include their key metrics (e.g., "MyMichigan Health: 124 cardio providers, eff 5.0").
     7. Always include the best combination or result found so far, with exact numbers.
     """
- 
+
     history_text = "\n".join([f"{m.type}: {_get_content(m)}" for m in to_summarize])
     final_prompt = f"{instruction}\n\nHISTORY TO SUMMARIZE:\n{history_text}\n\nSummary:"
- 
+
     response = llm.invoke([HumanMessage(content=final_prompt)])
- 
+
     updated_summary = response.content
     if isinstance(updated_summary, list):
         updated_summary = " ".join(
@@ -284,18 +283,18 @@ def summarize_messages(state: AgentState, llm: ChatOpenAI):
         ).strip()
     else:
         updated_summary = updated_summary.strip() if updated_summary else ""
- 
+
     if not updated_summary:
         updated_summary = existing_summary or "Summary unavailable."
- 
+
     messages_to_remove = [RemoveMessage(id=m.id) for m in to_summarize]
- 
+
     return {
         "summary": updated_summary,
         "messages": messages_to_remove,
     }
- 
- 
+
+
 def should_summarize(state: AgentState):
     """Routing function: decide whether to summarize messages."""
     messages = state["messages"]

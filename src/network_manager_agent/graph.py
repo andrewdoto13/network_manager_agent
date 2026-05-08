@@ -1,25 +1,24 @@
 """Graph construction for the network management agent."""
 
-from langchain_openai import ChatOpenAI
 from langgraph.graph import START, StateGraph
 from langgraph.prebuilt import tools_condition
-from langgraph.checkpoint.sqlite import SqliteSaver
 
-from .state import AgentState
+from .config import ChatOpenAIWithReasoning
 from .nodes import (
-    network_manager,
-    update_state,
-    summarize_messages,
-    should_summarize,
     execute_tools,
+    network_manager,
+    should_summarize,
+    summarize_messages,
+    update_state,
 )
+from .state import AgentState
 
 
-def build_agent(llm: ChatOpenAI, checkpointer=None):
+def build_agent(llm: ChatOpenAIWithReasoning, checkpointer=None):
     """Build and compile the network management agent graph.
 
     Args:
-        llm: Configured ChatOpenAI instance.
+        llm: Configured ChatOpenAIWithReasoning instance.
         checkpointer: Optional checkpointer for state persistence.
 
     Returns:
