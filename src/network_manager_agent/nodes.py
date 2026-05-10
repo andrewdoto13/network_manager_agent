@@ -12,8 +12,9 @@ from langchain_core.messages import (
 )
 from langgraph.prebuilt import ToolNode
 
-from .config import MESSAGES_TO_ARCHIVE, SUMMARIZE_THRESHOLD, ChatOpenAIWithReasoning
+from .config import MESSAGES_TO_ARCHIVE, SUMMARIZE_THRESHOLD
 from .data import DataManager
+from langchain_deepseek import ChatDeepSeek
 from .state import AgentState
 from .tools import TOOLS
 
@@ -26,7 +27,7 @@ def _get_anchor_message(state: AgentState) -> str:
     return "Please continue."
 
 
-def network_manager(state: AgentState, llm: ChatOpenAIWithReasoning):
+def network_manager(state: AgentState, llm: ChatDeepSeek):
     """The main LLM reasoning node that decides which tools to call."""
     dm = DataManager()
     county_specialty_thresholds = state.get("county_specialty_thresholds", {})
@@ -40,112 +41,38 @@ def network_manager(state: AgentState, llm: ChatOpenAIWithReasoning):
 
     cand_cols = ", ".join(dm.get_candidates_df().columns)
     mem_cols = ", ".join(dm.get_members_df().columns)
-    ent_cols = ", ".join(dm.entity_summaries_df.columns)
 
-    system_message_content = f'''ROLE
-You are a healthcare provider network management assistant. Your job is to analyze
-candidate provider data, simulate network changes, and recommend or commit contract
-entities to improve member coverage. You MUST use the available tools to analyze data
-and update the network.
+    system_message_content = f'''# ROLE & SCOPE
+You are a healthcare provider network management assistant. Analyze candidate provider data,
+simulate network changes, and recommend or commit contract entities to improve member coverage.
+Use the available tools to analyze data and update the network.
 
-NETWORK SCOPE
 You are evaluating member coverage for these county-specialty combinations:
 {scope_section}
 
-DATA
-Three DataFrames available in run_code:
-
+# DATA
 candidates_df (provider-level): {cand_cols}
 members_df (member-level): {mem_cols}
-entity_summaries_df (per-entity): {ent_cols}
+network_df (currently contracted): filtered from candidates_df by the network state
 
-SANDBOX LIBRARIES
-The following are ALREADY AVAILABLE in run_code — DO NOT use import statements:
-  pd (pandas), np (numpy), json, math, functools, itertools, collections, BallTree
+# SANDBOX
+Pre-injected: pd (pandas), np (numpy), json, math, functools, itertools, collections, BallTree, defaultdict
 Builtins: len, sorted, range, str, int, float, bool, set, list, dict, tuple, enumerate, zip, map, filter, isinstance, type, print, abs, round, min, max, sum, any, all
-** import is DISABLED and will raise ImportError. **
+** import is DISABLED. Each run_code call is a fresh sandbox — variables from previous calls are NOT available. **
 
-SANDBOX FUNCTIONS
-compute_coverage(network_df, members_df, thresholds, candidates_df)
-  → (list[dict], list[str]) — list of {{state, county, specialty, members_with_access, total_members, coverage_percentage}} + validation errors
+compute_coverage(network_df, members_df, thresholds, candidates_df) → (list[dict], list[str])
+  Each dict: {{state, county, specialty, members_with_access, total_members, coverage_percentage}}
 
-COMMON PROCEDURES
-Self-contained run_code blocks for common tasks. Each is a complete, copy-paste starting point.
+## GUIDANCE
+- For proximity checks: use `BallTree` with haversine metric. Convert degrees to radians with `np.deg2rad()`, then `tree.query_radius()` with radius = `threshold_miles / 3958.8`.
+- For coverage simulation: use `compute_coverage()` on the baseline network, then on a simulated network (concat candidate providers), and compare deltas.
+- For filtering: use pandas boolean indexing, `isin()`, `groupby().agg()`. Remember `candidates_df` is provider-level — group by `entity` for entity-level summaries.
 
-1) Rank multi-specialty candidates by marginal coverage:
-   # Derive required specialties from thresholds
-   required_specs = set()
-   for state_val, counties in thresholds.items():
-       for county_val, specs in counties.items():
-           required_specs.update(specs.keys())
-   entity_specs = candidates_df.groupby("entity")["specialty"].apply(
-       lambda x: set(x.str.lower().unique()))
-   candidate_entities = entity_specs[entity_specs.apply(lambda s: required_specs.issubset(s))].index.tolist()
-   # First, extract uncovered members per county/specialty so we can rank
-   # by which entity covers the most uncovered members (faster than full simulation)
-   uncovered_by_spec = {{}}
-   for state_val, counties in thresholds.items():
-       for county_val, specs in counties.items():
-           county_members = members_df[members_df["county"].str.lower() == county_val.lower()]
-           if "state" in members_df.columns:
-               county_members = county_members[county_members["state"].str.lower() == state_val.lower()]
-           for spec, threshold_miles in specs.items():
-               key = (state_val, county_val, spec)
-               spec_providers = network_df[network_df["specialty"].str.lower() == spec.lower()]
-               radius_rad = threshold_miles / 3958.8
-               if not spec_providers.empty:
-                   tree = BallTree(np.deg2rad(spec_providers[["lat", "lon"]]), metric="haversine")
-                   nearby = tree.query_radius(np.deg2rad(county_members[["lat", "lon"]]), r=radius_rad)
-                   uncovered = county_members.iloc[[i for i, n in enumerate(nearby) if len(n) == 0]]
-               else:
-                   uncovered = county_members
-               uncovered_by_spec[key] = uncovered
-   # Now rank each candidate by how many uncovered members it would cover
-   rankings = []
-   for ent in candidate_entities:
-       ent_providers = candidates_df[candidates_df["entity"].str.lower() == ent.lower()]
-       total_newly_covered = 0
-       for state_val, counties in thresholds.items():
-           for county_val, specs in counties.items():
-               for spec, threshold_miles in specs.items():
-                   key = (state_val, county_val, spec)
-                   uncovered = uncovered_by_spec.get(key)
-                   if uncovered is None or uncovered.empty:
-                       continue
-                   ent_spec = ent_providers[ent_providers["specialty"].str.lower() == spec.lower()]
-                   if ent_spec.empty:
-                       continue
-                   radius_rad = threshold_miles / 3958.8
-                   tree = BallTree(np.deg2rad(ent_spec[["lat", "lon"]]), metric="haversine")
-                   nearby = tree.query_radius(np.deg2rad(uncovered[["lat", "lon"]]), r=radius_rad)
-                   total_newly_covered += sum(len(n) > 0 for n in nearby)
-       rankings.append({{"entity": ent, "newly_covered": total_newly_covered}})
-   result = sorted(rankings, key=lambda x: x["newly_covered"], reverse=True)
-
-2) Simulate adding entities — test before committing:
-   new_entities = ["Entity A", "Entity B"]
-   new_providers = candidates_df[candidates_df["entity"].str.lower().isin([e.lower() for e in new_entities])]
-   sim_net = pd.concat([network_df, new_providers])
-   coverage, errors = compute_coverage(sim_net, members_df, thresholds, candidates_df)
-   result = pd.DataFrame(coverage)
-
-3) Compare coverage delta — baseline vs simulated for one entity:
-   base_cov, _ = compute_coverage(network_df, members_df, thresholds, candidates_df)
-   base_df = pd.DataFrame(base_cov)
-   new_providers = candidates_df[candidates_df["entity"].str.lower() == "new entity"]
-   sim_cov, _ = compute_coverage(pd.concat([network_df, new_providers]), members_df, thresholds, candidates_df)
-   sim_df = pd.DataFrame(sim_cov)
-   merged = pd.merge(base_df, sim_df, on=["state", "county", "specialty"], suffixes=("_base", "_sim"))
-   merged["delta_pp"] = merged["coverage_percentage_sim"] - merged["coverage_percentage_base"]
-   result = merged[["county", "specialty", "coverage_percentage_base", "coverage_percentage_sim", "delta_pp"]]
-
-RULES
-1. You may ONLY call add_contract_entity with valid entity names found in the data. Never invent entities, providers, or metrics.
+# RULES
+1. Only call add_contract_entity with valid entity names from the data. Never invent entities, providers, or metrics.
 2. If required information is missing, ask the user for clarification instead of guessing.
-3. Always write a response in your final message. Never return an empty response. Summarize what was accomplished when complete.
-4. Be decisive. Present your best result with coverage numbers and stop. Do not repeat the same simulations or keep exploring after finding a viable answer.
-5. If the user asks for analysis or recommendations — present your findings and stop. Do NOT call add_contract_entity in the same response.
-6. run_code mechanics: each call is a fresh sandbox — variables from a previous call are NOT available. NO import statements — all libraries are pre-injected. The schema is documented above — do NOT waste calls exploring column names. Assign your result to 'result'. Timeout is 60s.
+3. Be decisive. Present your best result with coverage numbers and stop. Do not repeat the same simulations.
+4. If the user asks for analysis or recommendations, present findings and stop. Do NOT call add_contract_entity in the same response.
 '''
 
     messages_history = state.get("messages", [])
@@ -235,7 +162,7 @@ def _get_content(m: Any) -> str:
     return str(m.content)
 
 
-def summarize_messages(state: AgentState, llm: ChatOpenAIWithReasoning):
+def summarize_messages(state: AgentState, llm: ChatDeepSeek):
     """Summarize old messages to manage context window size."""
     messages = state["messages"]
     existing_summary = state.get("summary", "")

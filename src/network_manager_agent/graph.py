@@ -3,7 +3,6 @@
 from langgraph.graph import START, StateGraph
 from langgraph.prebuilt import tools_condition
 
-from .config import ChatOpenAIWithReasoning
 from .nodes import (
     execute_tools,
     network_manager,
@@ -12,13 +11,14 @@ from .nodes import (
     update_state,
 )
 from .state import AgentState
+from langchain_deepseek import ChatDeepSeek
 
 
-def build_agent(llm: ChatOpenAIWithReasoning, checkpointer=None):
+def build_agent(llm: ChatDeepSeek, checkpointer=None):
     """Build and compile the network management agent graph.
 
     Args:
-        llm: Configured ChatOpenAIWithReasoning instance.
+        llm: Configured ChatDeepSeek instance.
         checkpointer: Optional checkpointer for state persistence.
 
     Returns:

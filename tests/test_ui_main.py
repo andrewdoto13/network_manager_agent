@@ -112,8 +112,6 @@ class TestRunAgentSession:
                     mock_agent,
                     "Add cardiology providers",
                     {"MI": {"washtenaw": {"cardiology": 10.0}}},
-                    [],
-                    "{}",
                     {"configurable": {"thread_id": "1"}},
                 )
 
@@ -123,8 +121,6 @@ class TestRunAgentSession:
         assert isinstance(inputs["messages"][0], HumanMessage)
         assert inputs["messages"][0].content == "Add cardiology providers"
         assert "county_specialty_thresholds" in inputs
-        assert "entity_summaries" in inputs
-        assert "schema_profile" in inputs
 
     def test_prints_summary_when_available(self, clean_data_manager):
         mock_agent = MagicMock()
@@ -139,8 +135,6 @@ class TestRunAgentSession:
                     mock_agent,
                     "Test",
                     {},
-                    [],
-                    "{}",
                     {"configurable": {"thread_id": "1"}},
                 )
 
@@ -159,8 +153,6 @@ class TestRunAgentSession:
                     mock_agent,
                     "Test",
                     {},
-                    [],
-                    "{}",
                     {"configurable": {"thread_id": "1"}},
                 )
 

@@ -167,13 +167,17 @@ def add_contract_entity(
     entity_ids: list[str],
     network: Annotated[list[str], InjectedState("network")],
 ):
-    """Add one or more contract entities to the network using their names.
+    """Add one or more contract entities to the network. Use ONLY after analysis is complete and you have decided which entities to include.
 
-    - entity_ids: List of entity names to add (e.g., ["Covenant Healthcare"]).
-    Matching is case-insensitive. Entities already in the network are reported in
-    'skipped_entities'. Invalid entity names are reported in 'errors'.
-    Returns a dict with: added_entities (list), skipped_entities (list), errors (list).
-    """
+    Parameters:
+      entity_ids: List of entity names to add (e.g., ["Covenant Healthcare", "Beaumont Health"]).
+
+    Matching is case-insensitive against the entity names in candidates_df. Returns a dict with:
+      - added_entities: List of successfully added canonical entity names
+      - skipped_entities: List of entities already in the network
+      - errors: List of entity names not found in candidates
+
+    To see the current network state, use run_code to inspect network_df."""
     dm = DataManager()
     candidates_df = dm.get_candidates_df()
 
@@ -209,26 +213,27 @@ def add_contract_entity(
 @tool
 def run_code(
     network: Annotated[list[str], InjectedState("network")],
-    entity_summaries: Annotated[list[dict], InjectedState("entity_summaries")],
     county_specialty_thresholds: Annotated[dict, InjectedState("county_specialty_thresholds")],
     code: str,
 ):
     """Execute Python/pandas code to filter, analyze, or simulate network changes.
 
-    The following variables are available in the sandbox:
-    - candidates_df: Raw provider-level candidate data (DataFrame)
-    - entity_summaries_df: Pre-aggregated entity summaries (DataFrame)
-    - network_df: Currently contracted providers (DataFrame)
-    - members_df: Member locations (DataFrame)
-    - thresholds: Service area configuration (dict)
-    - compute_coverage: Calculate per-county-and-specialty member coverage.
-      Use to check current status or simulate adding entities before committing.
-      Usage: compute_coverage(network_df, members_df, thresholds, candidates_df)
-      Returns: (list[dict], list[str]) — each dict has state, county, specialty,
-      members_with_access, total_members, coverage_percentage.
+    **IMPORTANT**: Each call is a completely fresh sandbox — variables from previous calls are NOT available. Do NOT write import statements.
 
-    Assign your result to 'result'. Returns as JSON.
-    Timeout: 60 seconds.
+    Available variables:
+      - candidates_df: Provider-level candidate data. Columns: entity, specialty, lat, lon, effectiveness, efficiency, new_patient_claims, ...
+      - network_df: Currently contracted providers (filtered from candidates_df by the network state).
+      - members_df: Member locations. Columns: state, county, lat, lon, ...
+      - thresholds: Service area config dict, e.g. {"mi": {"wayne": {"general practice": 20.0}}}
+      - compute_coverage: See below.
+
+    compute_coverage(network_df, members_df, thresholds, candidates_df) → (coverage_list, errors_list)
+      Computes per-county-and-specialty member coverage using haversine distance.
+      coverage_list: list of dicts with {state, county, specialty, members_with_access, total_members, coverage_percentage}
+      errors_list: list of validation error strings (check this for issues).
+
+    Assign your result to 'result' (must be a JSON-serializable variable). Timeout: 60 seconds.
+    Tip: Use BallTree for haversine distance queries; use compute_coverage() for coverage simulation.
     """
     dm = DataManager()
 
@@ -286,7 +291,6 @@ def run_code(
         "defaultdict": defaultdict,
         "BallTree": BallTree,
         "candidates_df": dm.get_candidates_df(),
-        "entity_summaries_df": pd.DataFrame(entity_summaries) if entity_summaries else pd.DataFrame(),
         "network_df": net_df,
         "members_df": dm.get_members_df(),
         "thresholds": county_specialty_thresholds,

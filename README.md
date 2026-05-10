@@ -16,10 +16,10 @@ This project implements a ReAct (Reasoning + Acting) agent that manages a health
 
 The agent is built with [LangGraph](https://langchain-ai.github.io/langgraph/) and consists of:
 
-- **State**: `AgentState` extends `MessagesState` with fields for `network` (accumulated entity IDs), `summary`, `county_specialty_thresholds`, `entity_summaries`, and `schema_profile`.
+- **State**: `AgentState` extends `MessagesState` with fields for `network` (accumulated entity IDs), `summary`, and `county_specialty_thresholds`.
 - **Persistence**: Uses `SqliteSaver` to persist session state in `checkpoints.sqlite`, allowing conversations to be resumed via `thread_id`.
 - **Tools**:
-    - `run_code`: A pandas sandbox for discovery, custom filtering, and simulating coverage impact. Injects `candidates_df`, `entity_summaries_df`, `network_df`, `members_df`, `thresholds`, and `compute_coverage`. Supports pandas, numpy, sklearn.neighbors.BallTree, and standard library modules. 20-second timeout.
+    - `run_code`: A pandas sandbox for discovery, custom filtering, and simulating coverage impact. Injects `candidates_df`, `network_df`, `members_df`, `thresholds`, and `compute_coverage`. Supports pandas, numpy, sklearn.neighbors.BallTree, and standard library modules. 20-second timeout.
     - `add_contract_entity`: Commits validated entities to the network, skipping duplicates.
 - **Nodes**: `network_manager` (LLM reasoning), `tools` (tool execution via `execute_tools` wrapper), `update_state` (extracts added entity IDs), `summarize_messages` (context management).
 - **Graph**: START -> network_manager -> [tools -> update_state -> {summarize_messages | continue}] -> END.

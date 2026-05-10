@@ -1,10 +1,7 @@
 """Data loading and management for the network management agent."""
 
-import json
 import pandas as pd
-import numpy as np
 from pathlib import Path
-from typing import Any
 
 from .config import DATA_DIR, SERVICE_AREA_BUFFER_MILES
 
@@ -107,143 +104,6 @@ class DataManager:
         return df
 
     # -----------------------------------------------------------------------
-    # Aggregation & profiling
-    # -----------------------------------------------------------------------
-
-    @staticmethod
-    def aggregate_entities(candidates: pd.DataFrame | list[dict]) -> pd.DataFrame:
-        """Aggregate provider-level data into entity-level summaries.
-
-        Args:
-            candidates: Provider-level records as a DataFrame or list of dicts.
-        """
-        if isinstance(candidates, list) and not candidates:
-            return pd.DataFrame()
-        if isinstance(candidates, pd.DataFrame) and candidates.empty:
-            return pd.DataFrame()
-
-        df = pd.DataFrame(candidates)
-        entity_col = "entity" if "entity" in df.columns else None
-        eff_col = "effectiveness" if "effectiveness" in df.columns else None
-        eta_col = "efficiency" if "efficiency" in df.columns else None
-        spec_col = "specialty" if "specialty" in df.columns else None
-        claims_col = "total_claims_amount" if "total_claims_amount" in df.columns else None
-        medicare_claims_col = "medicare_total_claims_amount" if "medicare_total_claims_amount" in df.columns else None
-        confidence_col = "location_confidence" if "location_confidence" in df.columns else None
-        new_pat_col = "new_patient_claims" if "new_patient_claims" in df.columns else None
-        medicare_claims_vol_col = "medicare_claims_volume" if "medicare_claims_volume" in df.columns else None
-        total_claims_vol_col = "total_claims_volume" if "total_claims_volume" in df.columns else None
-        city_col = "city" if "city" in df.columns else None
-
-        if entity_col is None:
-            df = df.copy()
-            df["entity"] = df.index
-            entity_col = "entity"
-
-        agg_map = {}
-        if eff_col: agg_map[eff_col] = "mean"
-        if eta_col: agg_map[eta_col] = "mean"
-        if spec_col:
-            agg_map[spec_col] = (
-                lambda x: x.value_counts().head(10).index.tolist()
-                + (
-                    [f"... and {x.dropna().nunique() - 10} more"]
-                    if x.dropna().nunique() > 10
-                    else []
-                )
-            )
-        if new_pat_col: agg_map[new_pat_col] = lambda x: float(round((x == 'yes').mean() * 100, 2)) if not x.empty else None
-        if medicare_claims_vol_col:
-            agg_map[medicare_claims_vol_col] = lambda x: {k: int(v) for k, v in x.dropna().value_counts().to_dict().items()}
-        if total_claims_vol_col:
-            agg_map[total_claims_vol_col] = lambda x: {k: int(v) for k, v in x.dropna().value_counts().to_dict().items()}
-        if city_col: agg_map[city_col] = "nunique"
-        agg_map[entity_col] = "count"
-        if claims_col: agg_map[claims_col] = lambda x: float(round(x.dropna().mean(), 2)) if x.dropna().any() else None
-        if medicare_claims_col: agg_map[medicare_claims_col] = lambda x: float(round(x.dropna().mean(), 2)) if x.dropna().any() else None
-        if confidence_col:
-            agg_map[confidence_col] = lambda x: {k: int(v) for k, v in x.dropna().value_counts().to_dict().items()}
-
-        agg_df = df.groupby(entity_col).agg(agg_map)
-
-        if claims_col:
-            totals = df.groupby(entity_col)[claims_col].apply(lambda x: float(round(x.dropna().sum(), 2)) if x.dropna().any() else None)
-            totals.name = "_sum_total_claims_amount"
-            agg_df = agg_df.join(totals)
-        if medicare_claims_col:
-            totals = df.groupby(entity_col)[medicare_claims_col].apply(lambda x: float(round(x.dropna().sum(), 2)) if x.dropna().any() else None)
-            totals.name = "_sum_medicare_total_claims_amount"
-            agg_df = agg_df.join(totals)
-
-        agg_df = agg_df.rename(columns={
-            entity_col: "provider_count",
-            eff_col: "avg_effectiveness" if eff_col else None,
-            eta_col: "avg_efficiency" if eta_col else None,
-            spec_col: "specialties" if spec_col else None,
-            claims_col: "avg_total_claims_amount" if claims_col else None,
-            medicare_claims_col: "avg_medicare_total_claims_amount" if medicare_claims_col else None,
-            confidence_col: "location_confidence_dist" if confidence_col else None,
-            new_pat_col: "new_patient_rate" if new_pat_col else None,
-            medicare_claims_vol_col: "medicare_claims_volume_dist" if medicare_claims_vol_col else None,
-            total_claims_vol_col: "total_claims_volume_dist" if total_claims_vol_col else None,
-            city_col: "geographic_reach" if city_col else None,
-            "_sum_total_claims_amount": "total_claims_amount",
-            "_sum_medicare_total_claims_amount": "total_medicare_claims_amount",
-        })
-        return agg_df
-
-    @staticmethod
-    def build_schema_profile(entity_df: pd.DataFrame) -> dict:
-        """Build a statistical profile from an entity DataFrame."""
-        if entity_df.empty:
-            return {}
-
-        profile = {}
-        id_cols = {"entity", "entity_id"}
-        cols_to_profile = [col for col in entity_df.columns if col not in id_cols]
-
-        for col in cols_to_profile:
-            dtype = str(entity_df[col].dtype)
-            col_profile = {"type": dtype}
-            if pd.api.types.is_numeric_dtype(entity_df[col]):
-                col_profile.update({
-                    "min": float(entity_df[col].min()),
-                    "max": float(entity_df[col].max()),
-                    "mean": float(round(entity_df[col].mean(), 2)),
-                    "q1": float(entity_df[col].quantile(0.25)),
-                    "median": float(entity_df[col].median()),
-                    "q3": float(entity_df[col].quantile(0.75)),
-                })
-            elif pd.api.types.is_bool_dtype(entity_df[col]):
-                counts = entity_df[col].value_counts().to_dict()
-                col_profile["counts"] = {str(k): int(v) for k, v in counts.items()}
-            else:
-                first_val = entity_df[col].dropna().iloc[0] if not entity_df[col].dropna().empty else None
-                if isinstance(first_val, (list, dict)):
-                    all_vals = [item for sublist in entity_df[col].dropna() for item in (sublist if isinstance(sublist, list) else sublist.keys() if isinstance(sublist, dict) else [sublist])]
-                    unique_vals = sorted(list(set(all_vals)))
-                    col_profile.update({
-                        "unique_count": int(len(unique_vals)),
-                        "unique_values": unique_vals,
-                        "distribution": {
-                            str(k): int(v)
-                            for k, v in pd.Series(all_vals).value_counts().head(5).to_dict().items()
-                        },
-                    })
-                else:
-                    unique_values = sorted(entity_df[col].dropna().unique().tolist())
-                    col_profile.update({
-                        "unique_count": int(len(unique_values)),
-                        "unique_values": unique_values,
-                        "distribution": {
-                            str(k): int(v)
-                            for k, v in entity_df[col].value_counts().head(5).to_dict().items()
-                        },
-                    })
-            profile[col] = col_profile
-        return profile
-
-    # -----------------------------------------------------------------------
     # Service area filtering
     # -----------------------------------------------------------------------
 
@@ -331,29 +191,14 @@ class DataManager:
         else:
             self.candidates_df, self.members_df = self._filter_by_service_area(cdf_raw, mdf_raw, self.thresholds)
 
-        self.entity_summaries_df = self.aggregate_entities(self.candidates_df)
-        self.entity_summaries = self.entity_summaries_df.reset_index().to_dict(orient="records") if not self.entity_summaries_df.empty else []
-        self.schema_profile = self.build_schema_profile(self.entity_summaries_df)
-        self.raw_candidate_schema = self.build_schema_profile(self.candidates_df)
-
     # -----------------------------------------------------------------------
     # Public accessors
     # -----------------------------------------------------------------------
-
     def get_candidates_df(self) -> pd.DataFrame:
         return self.candidates_df
 
     def get_members_df(self) -> pd.DataFrame:
         return self.members_df
-
-    def get_entity_summaries(self) -> list[dict]:
-        return self.entity_summaries
-
-    def get_schema_profile(self) -> dict:
-        return self.schema_profile
-
-    def get_raw_candidate_schema_profile(self) -> dict:
-        return self.raw_candidate_schema
 
     def get_providers_by_entity(self, entity_id: str) -> pd.DataFrame:
         """Return all providers for a given entity."""

@@ -65,15 +65,13 @@ def _clear_thread_state(thread_id: str, db_path: str, log_dir: Path) -> None:
 
 
 def run_agent_session(
-    agent, prompt, thresholds, summaries, profile, thread_config, max_steps=None
+    agent, prompt, thresholds, thread_config, max_steps=None
 ):
     """Helper to encapsulate agent execution and summary printing."""
     messages = [HumanMessage(content=prompt)]
     inputs = {
         "messages": messages,
         "county_specialty_thresholds": thresholds,
-        "entity_summaries": summaries,
-        "schema_profile": profile,
     }
     run_agent(agent, inputs, thread_config, max_steps=max_steps)
 
@@ -232,14 +230,10 @@ def main():
         county_specialty_thresholds=county_specialty_thresholds,
     )
 
-    entity_summaries = dm.get_entity_summaries()
-    schema_profile = json.dumps(dm.get_schema_profile(), indent=2)
-
     print(
         f"Loaded candidates and members -> "
         f"{len(dm.get_candidates_df())} candidates in service area, "
-        f"{len(dm.get_members_df())} scoped members "
-        f"-> {len(entity_summaries)} entities"
+        f"{len(dm.get_members_df())} scoped members"
     )
 
     # Build agent
@@ -252,8 +246,7 @@ def main():
         if args.prompt:
             run_agent_session(
                 agent, args.prompt,
-                county_specialty_thresholds, entity_summaries,
-                schema_profile, thread_config,
+                county_specialty_thresholds, thread_config,
                 max_steps=args.max_steps,
             )
         else:
@@ -265,8 +258,7 @@ def main():
                     if prompt:
                         run_agent_session(
                             agent, prompt,
-                            county_specialty_thresholds, entity_summaries,
-                            schema_profile, thread_config,
+                            county_specialty_thresholds, thread_config,
                             max_steps=args.max_steps,
                         )
                         prompt = input("\n> ").strip()

@@ -163,48 +163,43 @@ class TestAddContractEntity:
 # ---------------------------------------------------------------------------
 
 class TestRunCode:
-    def test_simple_expression(self, seeded_data_manager, mock_entity_summaries, mock_thresholds):
+    def test_simple_expression(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
-            "entity_summaries": mock_entity_summaries,
             "county_specialty_thresholds": mock_thresholds,
             "code": "result = 2 + 2",
         })
         assert result == 4
 
-    def test_pandas_query(self, seeded_data_manager, mock_entity_summaries, mock_thresholds):
+    def test_pandas_query(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
-            "entity_summaries": mock_entity_summaries,
             "county_specialty_thresholds": mock_thresholds,
             "code": "result = candidates_df.shape[0]",
         })
         assert result == 6
 
-    def test_dataframe_result(self, seeded_data_manager, mock_entity_summaries, mock_thresholds):
+    def test_dataframe_result(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
-            "entity_summaries": mock_entity_summaries,
             "county_specialty_thresholds": mock_thresholds,
             "code": "result = candidates_df[['entity', 'specialty']].head(2)",
         })
         assert isinstance(result, list)
         assert len(result) == 2
 
-    def test_error_handling(self, seeded_data_manager, mock_entity_summaries, mock_thresholds):
+    def test_error_handling(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
-            "entity_summaries": mock_entity_summaries,
             "county_specialty_thresholds": mock_thresholds,
             "code": "result = undefined_variable + 1",
         })
         assert isinstance(result, str)
         assert "Error:" in result
 
-    def test_compute_coverage_in_sandbox(self, seeded_data_manager, mock_entity_summaries, mock_thresholds):
+    def test_compute_coverage_in_sandbox(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
-            "entity_summaries": mock_entity_summaries,
             "county_specialty_thresholds": mock_thresholds,
             "code": "cov, errs = compute_coverage(network_df, members_df, thresholds, candidates_df)\nresult = cov.__len__()",
         })

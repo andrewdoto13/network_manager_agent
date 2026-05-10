@@ -71,7 +71,7 @@ ENV/
 .ipynb_checkpoints
 
 # Project-specific
-logs/
+# logs/
 *.log
 checkpoints.sqlite
 

@@ -57,21 +57,13 @@ def mock_members_df(mock_members):
 
 
 @pytest.fixture
-def mock_entity_summaries(mock_candidates_df):
-    """Pre-aggregated entity summaries from mock candidates."""
-    return DataManager.aggregate_entities(mock_candidates_df).reset_index().to_dict(orient="records")
-
-
-@pytest.fixture
-def mock_state(mock_entity_summaries, mock_thresholds):
+def mock_state(mock_thresholds):
     """AgentState with all required fields populated."""
     return {
         "messages": [],
         "network": [],
         "summary": "",
         "county_specialty_thresholds": mock_thresholds,
-        "entity_summaries": mock_entity_summaries,
-        "schema_profile": "",
     }
 
 
@@ -84,15 +76,11 @@ def clean_data_manager():
 
 
 @pytest.fixture
-def seeded_data_manager(clean_data_manager, mock_candidates_df, mock_members_df, mock_entity_summaries, mock_thresholds):
+def seeded_data_manager(clean_data_manager, mock_candidates_df, mock_members_df, mock_thresholds):
     """Seed DataManager with mock data for testing."""
     dm = DataManager.__new__(DataManager)
     dm.candidates_df = mock_candidates_df
     dm.members_df = mock_members_df
-    dm.entity_summaries_df = DataManager.aggregate_entities(mock_candidates_df)
-    dm.entity_summaries = mock_entity_summaries
-    dm.schema_profile = {}
-    dm.raw_candidate_schema = {}
     dm.thresholds = mock_thresholds
     dm._initialized = True
     DataManager._instance = dm

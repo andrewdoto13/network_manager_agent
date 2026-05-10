@@ -115,113 +115,6 @@ class TestNormalizeStrings:
 
 
 # ---------------------------------------------------------------------------
-# Entity aggregation
-# ---------------------------------------------------------------------------
-
-class TestAggregateEntities:
-    def test_basic_aggregation(self, mock_candidates_df):
-        result = DataManager.aggregate_entities(mock_candidates_df)
-        assert len(result) == 3
-        assert "provider_count" in result.columns
-        assert "avg_effectiveness" in result.columns
-        assert "specialties" in result.columns
-
-    def test_provider_counts(self, mock_candidates_df):
-        result = DataManager.aggregate_entities(mock_candidates_df)
-        assert result.loc["health system a", "provider_count"] == 3
-        assert result.loc["medcare b", "provider_count"] == 2
-        assert result.loc["regional clinic c", "provider_count"] == 1
-
-    def test_avg_effectiveness(self, mock_candidates_df):
-        result = DataManager.aggregate_entities(mock_candidates_df)
-        assert abs(result.loc["health system a", "avg_effectiveness"] - 4.23) < 0.01
-
-    def test_specialties_sorted_unique(self, mock_candidates_df):
-        result = DataManager.aggregate_entities(mock_candidates_df)
-        specs = result.loc["health system a", "specialties"]
-        assert specs == ["cardiology", "general practice"]
-
-    def test_geographic_reach(self, mock_candidates_df):
-        result = DataManager.aggregate_entities(mock_candidates_df)
-        assert result.loc["health system a", "geographic_reach"] == 2
-
-    def test_empty_input_list(self):
-        result = DataManager.aggregate_entities([])
-        assert result.empty
-
-    def test_empty_input_dataframe(self):
-        result = DataManager.aggregate_entities(pd.DataFrame())
-        assert result.empty
-
-    def test_dataframe_input(self, mock_candidates_df):
-        result = DataManager.aggregate_entities(mock_candidates_df)
-        assert len(result) == 3
-
-    def test_missing_optional_columns(self):
-        df = pd.DataFrame({
-            "entity": ["A", "A"],
-            "specialty": ["cardiology", "general practice"],
-        })
-        result = DataManager.aggregate_entities(df)
-        assert len(result) == 1
-        assert "provider_count" in result.columns
-        assert "avg_effectiveness" not in result.columns
-
-
-# ---------------------------------------------------------------------------
-# Schema profiling
-# ---------------------------------------------------------------------------
-
-class TestBuildSchemaProfile:
-    def test_numeric_column_profile(self):
-        df = pd.DataFrame({"value": [1, 2, 3, 4, 5], "entity": ["a", "b", "c", "d", "e"]})
-        profile = DataManager.build_schema_profile(df)
-        assert profile["value"]["min"] == 1.0
-        assert profile["value"]["max"] == 5.0
-        assert profile["value"]["mean"] == 3.0
-        assert profile["value"]["median"] == 3.0
-
-    def test_string_column_profile(self):
-        df = pd.DataFrame({"city": ["ann arbor", "ann arbor", "ypsilanti"], "entity": ["a", "b", "c"]})
-        profile = DataManager.build_schema_profile(df)
-        assert profile["city"]["unique_count"] == 2
-        assert "ann arbor" in profile["city"]["unique_values"]
-
-    def test_list_column_profile(self):
-        df = pd.DataFrame({
-            "specialties": [["cardiology", "general practice"], ["cardiology"], ["general practice"]],
-            "entity": ["a", "b", "c"],
-        })
-        profile = DataManager.build_schema_profile(df)
-        assert profile["specialties"]["unique_count"] == 2
-        assert "cardiology" in profile["specialties"]["unique_values"]
-
-    def test_dict_column_profile(self):
-        df = pd.DataFrame({
-            "dist": [{"a": 3, "b": 2}, {"a": 1}],
-            "entity": ["a", "b"],
-        })
-        profile = DataManager.build_schema_profile(df)
-        assert "a" in profile["dist"]["unique_values"]
-        assert "b" in profile["dist"]["unique_values"]
-
-    def test_excludes_entity_column(self):
-        df = pd.DataFrame({"entity": ["A", "B"], "value": [1, 2]})
-        profile = DataManager.build_schema_profile(df)
-        assert "entity" not in profile
-        assert "value" in profile
-
-    def test_excludes_entity_id_column(self):
-        df = pd.DataFrame({"entity_id": ["A", "B"], "value": [1, 2]})
-        profile = DataManager.build_schema_profile(df)
-        assert "entity_id" not in profile
-
-    def test_empty_dataframe(self):
-        profile = DataManager.build_schema_profile(pd.DataFrame())
-        assert profile == {}
-
-
-# ---------------------------------------------------------------------------
 # Service area filtering
 # ---------------------------------------------------------------------------
 
@@ -270,7 +163,6 @@ class TestDataManager:
         dm = DataManager()
         assert not dm.get_candidates_df().empty
         assert not dm.get_members_df().empty
-        assert len(dm.get_entity_summaries()) > 0
 
     def test_get_providers_by_entity(self, clean_data_manager):
         dm = DataManager()
@@ -285,11 +177,3 @@ class TestDataManager:
         original_len = len(dm.get_candidates_df())
         DataManager()
         assert len(dm.get_candidates_df()) == original_len
-
-    def test_schema_profile_structure(self, clean_data_manager):
-        dm = DataManager()
-        profile = dm.get_schema_profile()
-        assert isinstance(profile, dict)
-        if profile:
-            for col, info in profile.items():
-                assert "type" in info

@@ -238,14 +238,11 @@ class TestNetworkManager:
         state = {
             "messages": [HumanMessage(content="Start")],
             "county_specialty_thresholds": {"MI": {"washtenaw": {"cardiology": 10.0}}},
-            "schema_profile": "",
             "summary": "",
         }
 
         with patch("network_manager_agent.nodes.DataManager") as MockDM:
             mock_dm = MagicMock()
-            mock_dm.get_schema_profile.return_value = {}
-            mock_dm.get_raw_candidate_schema_profile.return_value = {}
             MockDM.return_value = mock_dm
 
             network_manager(state, mock_llm)
@@ -253,14 +250,13 @@ class TestNetworkManager:
         bound_tools = mock_llm.bind_tools.call_args[0][0]
         assert len(bound_tools) == 2
 
-    def test_system_prompt_contains_schema(self):
+    def test_system_prompt_contains_columns(self):
         mock_llm = MagicMock()
         mock_llm.bind_tools.return_value.invoke.return_value = AIMessage(content="OK")
 
         state = {
             "messages": [HumanMessage(content="Start")],
             "county_specialty_thresholds": {},
-            "schema_profile": "",
             "summary": "",
         }
 
@@ -268,14 +264,14 @@ class TestNetworkManager:
             mock_dm = MagicMock()
             mock_dm.get_candidates_df.return_value.columns = ["entity", "specialty", "lat", "lon"]
             mock_dm.get_members_df.return_value.columns = ["lat", "lon", "county", "state"]
-            mock_dm.entity_summaries_df.columns = ["entity", "provider_count", "avg_effectiveness"]
             MockDM.return_value = mock_dm
 
             network_manager(state, mock_llm)
 
         call_args = mock_llm.bind_tools.return_value.invoke.call_args[0][0]
         system_msg = call_args[0]
-        assert "provider_count" in system_msg.content
+        assert "entity" in system_msg.content
+        assert "county" in system_msg.content
 
     def test_includes_summary_in_prompt(self):
         mock_llm = MagicMock()
@@ -284,14 +280,11 @@ class TestNetworkManager:
         state = {
             "messages": [HumanMessage(content="Continue")],
             "county_specialty_thresholds": {},
-            "schema_profile": "",
             "summary": "Previous progress here.",
         }
 
         with patch("network_manager_agent.nodes.DataManager") as MockDM:
             mock_dm = MagicMock()
-            mock_dm.get_schema_profile.return_value = {}
-            mock_dm.get_raw_candidate_schema_profile.return_value = {}
             MockDM.return_value = mock_dm
 
             network_manager(state, mock_llm)
@@ -308,14 +301,11 @@ class TestNetworkManager:
         state = {
             "messages": [HumanMessage(content="Start")],
             "county_specialty_thresholds": {},
-            "schema_profile": "",
             "summary": "",
         }
 
         with patch("network_manager_agent.nodes.DataManager") as MockDM:
             mock_dm = MagicMock()
-            mock_dm.get_schema_profile.return_value = {}
-            mock_dm.get_raw_candidate_schema_profile.return_value = {}
             MockDM.return_value = mock_dm
 
             result = network_manager(state, mock_llm)

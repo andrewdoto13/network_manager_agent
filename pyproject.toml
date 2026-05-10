@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "AI Agent that performs provider network management and optimization"
 requires-python = ">=3.12"
 dependencies = [
-    "langchain-openai>=1.1.9",
+    "langchain-deepseek>=1.0.1",
     "langchain>=1.2.10",
     "langchain-core>=1.2.12",
     "langgraph>=1.0.8",
