@@ -64,6 +64,7 @@ def mock_state(mock_thresholds):
         "network": [],
         "summary": "",
         "county_specialty_thresholds": mock_thresholds,
+        "sandbox_cache": {},
     }
 
 

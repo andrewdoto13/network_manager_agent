@@ -55,10 +55,10 @@ candidates_df (provider-level): {cand_cols}
 members_df (member-level): {mem_cols}
 network_df (currently contracted): filtered from candidates_df by the network state
 
-# SANDBOX
-Pre-injected: pd (pandas), np (numpy), json, math, functools, itertools, collections, BallTree, defaultdict
+  # SANDBOX
+Pre-injected: pd, np, json, math, itertools, collections, BallTree, defaultdict — use them directly
 Builtins: len, sorted, range, str, int, float, bool, set, list, dict, tuple, enumerate, zip, map, filter, isinstance, type, print, abs, round, min, max, sum, any, all
-Each run_code call is a fresh sandbox — variables from previous calls are NOT available.
+State across calls: `prev_result` holds the last run_code result. `sandbox_cache` is a persistent dict — write with `sandbox_cache["key"] = value`. IMPORTANT: only store JSON-serializable types (dict, list, str, int, float, bool, None). Convert DataFrames with `.to_dict('records')` first.
 
 compute_coverage(network_df, members_df, thresholds, candidates_df) → (list[dict], list[str])
   Each dict: {{state, county, specialty, members_with_access, total_members, coverage_percentage}}
@@ -67,10 +67,11 @@ compute_coverage(network_df, members_df, thresholds, candidates_df) → (list[di
 - For exploration: `BallTree` can give fast proximity heuristics, but results are approximate. Always validate final answers with `compute_coverage()`.
 - For coverage simulation: use `compute_coverage()`. This is the authoritative function — it evaluates coverage per member, not per county or aggregate.
 - For filtering: use pandas boolean indexing, `isin()`, `groupby().agg()`. Remember `candidates_df` is provider-level — group by `entity` for entity-level summaries.
+- Cross-call state: use `prev_result` to chain from the last call's result. use `sandbox_cache["key"] = value` to persist data across calls.
 
 # RULES
 1. `compute_coverage()` is the definitive network coverage calculator. Any custom coverage approximation (BallTree, centroid distance, etc.) is heuristic only and MUST be validated against `compute_coverage()` before reporting results.
-2. NEVER write import statements in run_code. All modules (pd, np, json, math, itertools, collections, BallTree) are pre-injected.
+ 2. Use pre-injected modules directly (pd, np, math, itertools, BallTree) — no import needed.
 3. Only call add_contract_entity with valid entity names from the data. Never invent entities, providers, or metrics.
 4. If required information is missing, ask the user for clarification instead of guessing.
 5. Be decisive. Present your best result with coverage numbers and stop. Do not repeat the same simulations.
@@ -131,6 +132,7 @@ def update_state(state: AgentState):
     """Extract new entity IDs from tool results and update the network state."""
     messages = state["messages"]
     new_entities = []
+    new_cache = {}
 
     batch = []
     for msg in reversed(messages):
@@ -154,7 +156,26 @@ def update_state(state: AgentState):
             except (json.JSONDecodeError, ValueError):
                 continue
 
-    return {"network": new_entities} if new_entities else {}
+        if msg.name == "run_code":
+            raw_content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            cache_marker = "---CACHE---"
+            if cache_marker in raw_content:
+                cache_part = raw_content.split(cache_marker, 1)[1].strip()
+                try:
+                    parsed_cache = json.loads(cache_part)
+                    if isinstance(parsed_cache, dict):
+                        new_cache = parsed_cache
+                except json.JSONDecodeError:
+                    pass
+
+    result = {}
+    if new_entities:
+        result["network"] = new_entities
+    if new_cache:
+        existing_cache = state.get("sandbox_cache", {})
+        merged = {**existing_cache, **new_cache}
+        result["sandbox_cache"] = merged
+    return result
 
 
 def _get_content(m: Any) -> str:

@@ -163,6 +163,80 @@ class TestUpdateState:
         result = update_state(state)
         assert result == {}
 
+    def test_extracts_sandbox_cache_from_run_code(self):
+        tool_msg = ToolMessage(
+            content="some output\n---CACHE---\n{\"rankings\": [1, 2, 3]}",
+            tool_call_id="1",
+            name="run_code",
+        )
+        state = {"messages": [tool_msg], "sandbox_cache": {}}
+        result = update_state(state)
+        assert "sandbox_cache" in result
+        assert result["sandbox_cache"]["rankings"] == [1, 2, 3]
+
+    def test_cache_shallow_merges_with_existing(self):
+        tool_msg = ToolMessage(
+            content="output\n---CACHE---\n{\"new_key\": \"new_val\"}",
+            tool_call_id="1",
+            name="run_code",
+        )
+        state = {
+            "messages": [tool_msg],
+            "sandbox_cache": {"existing": "data"},
+        }
+        result = update_state(state)
+        assert result["sandbox_cache"]["existing"] == "data"
+        assert result["sandbox_cache"]["new_key"] == "new_val"
+
+    def test_cache_overwrites_existing_keys(self):
+        tool_msg = ToolMessage(
+            content="---CACHE---\n{\"key\": \"updated\"}",
+            tool_call_id="1",
+            name="run_code",
+        )
+        state = {
+            "messages": [tool_msg],
+            "sandbox_cache": {"key": "old"},
+        }
+        result = update_state(state)
+        assert result["sandbox_cache"]["key"] == "updated"
+
+    def test_no_cache_marker_returns_empty(self):
+        tool_msg = ToolMessage(
+            content="just normal output",
+            tool_call_id="1",
+            name="run_code",
+        )
+        state = {"messages": [tool_msg], "sandbox_cache": {}}
+        result = update_state(state)
+        assert result == {}
+
+    def test_cache_invalid_json_returns_empty(self):
+        tool_msg = ToolMessage(
+            content="output\n---CACHE---\n{not valid json}",
+            tool_call_id="1",
+            name="run_code",
+        )
+        state = {"messages": [tool_msg], "sandbox_cache": {}}
+        result = update_state(state)
+        assert result == {}
+
+    def test_entities_and_cache_extracted_together(self):
+        entity_msg = ToolMessage(
+            content=json.dumps({"added_entities": ["Entity A"]}),
+            tool_call_id="1",
+            name="add_contract_entity",
+        )
+        code_msg = ToolMessage(
+            content="output\n---CACHE---\n{\"data\": [1, 2]}",
+            tool_call_id="2",
+            name="run_code",
+        )
+        state = {"messages": [entity_msg, code_msg], "sandbox_cache": {}}
+        result = update_state(state)
+        assert result["network"] == ["Entity A"]
+        assert result["sandbox_cache"]["data"] == [1, 2]
+
 
 # ---------------------------------------------------------------------------
 # summarize_messages

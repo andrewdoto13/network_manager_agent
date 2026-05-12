@@ -20,6 +20,10 @@ from typing import Annotated
 from .data import DataManager
 
 
+# Ephemeral: stores last run_code result for prev_result injection
+_prev_result: Any = None
+
+
 def _blocked_import(name: str, *args, **kwargs):
     raise ImportError(
         "import is disabled. Use pre-injected modules: "
@@ -60,7 +64,7 @@ def compute_coverage(
     - pd.DataFrame: used directly
     - empty/None: returns empty coverage
 
-    Thresholds use nested structure: {"mi": {"wayne": {"general practice": 20.0}}}.
+  Thresholds use nested structure: {"mi": {"wayne": {"general practice": 20.0}}}.
     """
     if isinstance(network_input, pd.DataFrame):
         net_df = network_input
@@ -215,12 +219,13 @@ def add_contract_entity(
 def run_code(
     network: Annotated[list[str], InjectedState("network")],
     county_specialty_thresholds: Annotated[dict, InjectedState("county_specialty_thresholds")],
+    sandbox_cache: Annotated[dict, InjectedState("sandbox_cache")],
     code: str,
 ):
     """Execute Python/pandas code to filter, analyze, or simulate network changes.
 
-    **NEVER write import statements** — all modules are pre-injected: pd, np, json, math, functools, itertools, collections, BallTree, defaultdict.
-    Each call is a completely fresh sandbox — variables from previous calls are NOT available.
+    Your code has pd, np, json, math, itertools, collections, BallTree, defaultdict already available — just use them directly.
+    Each call is a fresh sandbox — user variables are NOT preserved between calls.
 
     Available variables:
       - candidates_df: Provider-level candidate data. Columns: entity, specialty, lat, lon, effectiveness, efficiency, new_patient_claims, ...
@@ -228,6 +233,8 @@ def run_code(
       - members_df: Member locations. Columns: state, county, lat, lon, ...
       - thresholds: Service area config dict, e.g. {"mi": {"wayne": {"general practice": 20.0}}}
       - compute_coverage: See below.
+      - prev_result: JSON-serialized result from the previous run_code call (None on first call). Use to chain operations.
+      - sandbox_cache: Persistent dict you can read/write. Use `sandbox_cache["key"] = value` to store data across calls. ONLY store JSON-serializable types (dict, list, str, int, float, bool, None). Convert DataFrames with `.to_dict('records')`.
 
     compute_coverage(network_df, members_df, thresholds, candidates_df) → (coverage_list, errors_list)
       Computes per-county-and-specialty member coverage using haversine distance.
@@ -237,6 +244,8 @@ def run_code(
     Assign your result to 'result' (must be a JSON-serializable variable). Timeout: 60 seconds.
     Tip: compute_coverage() is the definitive coverage calculator (member-by-member). BallTree proximity checks are heuristic only — validate with compute_coverage().
     """
+    global _prev_result
+
     dm = DataManager()
 
     candidates = dm.get_candidates_df()
@@ -297,6 +306,8 @@ def run_code(
         "members_df": dm.get_members_df(),
         "thresholds": county_specialty_thresholds,
         "compute_coverage": compute_coverage,
+        "prev_result": _prev_result,
+        "sandbox_cache": sandbox_cache,
     }
 
     import threading
@@ -320,7 +331,11 @@ def run_code(
         try:
             old_stdout = sys.stdout
             sys.stdout = captured = io.StringIO()
-            exec(code, sandbox_globals)
+            exec(
+                '# pd, np, json, math, itertools, collections, BallTree, defaultdict are already available — use them directly\n'
+                + code,
+                sandbox_globals,
+            )
             result_holder["stdout"] = captured.getvalue()
             sys.stdout = old_stdout
             result_holder["value"] = sandbox_globals.get("result")
@@ -343,6 +358,14 @@ def run_code(
     result = result_holder["value"]
     stdout = result_holder["stdout"].strip()
 
+    # Store result for prev_result injection (JSON-serializable)
+    if isinstance(result, pd.DataFrame):
+        _prev_result = result.to_dict(orient="records")
+    elif isinstance(result, (dict, list, str, int, float, bool, type(None))):
+        _prev_result = result
+    else:
+        _prev_result = str(result)
+
     # Truncate stdout to prevent context flooding
     _STDOUT_MAX = 2000
     if len(stdout) > _STDOUT_MAX:
@@ -355,9 +378,16 @@ def run_code(
     else:
         output = str(result)
 
+    # Append sandbox_cache for persistence (skip non-serializable entries)
+    try:
+        cache_json = json.dumps(sandbox_cache)
+    except (TypeError, ValueError):
+        cache_json = "{}"
+    cache_suffix = f"\n---CACHE---\n{cache_json}"
+
     if stdout:
-        return f"[stdout]\n{stdout}\n[/stdout]\n{output}" if output else f"[stdout]\n{stdout}\n[/stdout]"
-    return output
+        return f"[stdout]\n{stdout}\n[/stdout]\n{output}{cache_suffix}" if output else f"[stdout]\n{stdout}\n[/stdout]{cache_suffix}"
+    return f"{output}{cache_suffix}"
 
 
 TOOLS = [add_contract_entity, run_code]

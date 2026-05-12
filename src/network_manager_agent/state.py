@@ -16,5 +16,6 @@ class AgentState(MessagesState):
     network: Annotated[list[str], operator.add] = []
     summary: str = ""
     county_specialty_thresholds: dict[str, dict[str, float]] = {}
+    sandbox_cache: dict = {}
 
 

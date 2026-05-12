@@ -72,6 +72,7 @@ def run_agent_session(
     inputs = {
         "messages": messages,
         "county_specialty_thresholds": thresholds,
+        "sandbox_cache": {},
     }
     run_agent(agent, inputs, thread_config, max_steps=max_steps)
 

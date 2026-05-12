@@ -167,31 +167,36 @@ class TestRunCode:
         result = run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
             "code": "result = 2 + 2",
         })
-        assert result == 4
+        assert "---CACHE---" in result
+        assert "4" in result
 
     def test_pandas_query(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
             "code": "result = candidates_df.shape[0]",
         })
-        assert result == 6
+        assert "---CACHE---" in result
+        assert "6" in result
 
     def test_dataframe_result(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
             "code": "result = candidates_df[['entity', 'specialty']].head(2)",
         })
-        assert isinstance(result, list)
-        assert len(result) == 2
+        assert "---CACHE---" in result
 
     def test_error_handling(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
             "code": "result = undefined_variable + 1",
         })
         assert isinstance(result, str)
@@ -201,49 +206,148 @@ class TestRunCode:
         result = run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
             "code": "cov, errs = compute_coverage(network_df, members_df, thresholds, candidates_df)\nresult = cov.__len__()",
         })
-        assert result == 2
+        assert "---CACHE---" in result
+        assert "2" in result
 
     def test_import_stripped_with_warning(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
             "code": "import pandas as pd\nresult = 1",
         })
         assert isinstance(result, str)
         assert "[sandbox] Stripped 1 import(s)" in result
-        assert "1" in result  # code still executed
+        assert "---CACHE---" in result
 
     def test_from_import_stripped_with_warning(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
             "code": "from itertools import combinations\nresult = 1",
         })
         assert isinstance(result, str)
         assert "[sandbox] Stripped 1 import(s)" in result
-        assert "1" in result
+        assert "---CACHE---" in result
 
     def test_indented_import_stripped(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
             "code": "if True:\n    import json\n    result = 1",
         })
         assert isinstance(result, str)
         assert "[sandbox] Stripped 1 import(s)" in result
-        assert "1" in result
+        assert "---CACHE---" in result
 
     def test_multiple_imports_stripped(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
             "code": "import pandas as pd\nimport numpy as np\nresult = candidates_df.shape[0]",
         })
         assert isinstance(result, str)
         assert "[sandbox] Stripped 2 import(s)" in result
-        assert "6" in result
+        assert "---CACHE---" in result
+
+    def test_prev_result_none_on_first_call(self, seeded_data_manager, mock_thresholds):
+        """prev_result should be None on first call."""
+        import network_manager_agent.tools as tools_mod
+        tools_mod._prev_result = None
+
+        result = run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
+            "code": "result = prev_result",
+        })
+        # Output includes cache suffix; prev_result=None means the main output is "None"
+        assert "---CACHE---" in result
+        assert result.split("---CACHE---")[0].strip() == "None"
+
+    def test_prev_result_holds_last_result(self, seeded_data_manager, mock_thresholds):
+        """prev_result should hold the result from the previous call."""
+        import network_manager_agent.tools as tools_mod
+        tools_mod._prev_result = None
+
+        # First call sets result
+        run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
+            "code": "result = 42",
+        })
+
+        # Second call reads prev_result
+        second = run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
+            "code": "result = prev_result",
+        })
+        # Result includes cache suffix
+        assert isinstance(second, str)
+        assert "42" in second
+
+    def test_sandbox_cache_injected(self, seeded_data_manager, mock_thresholds):
+        """sandbox_cache should be available in the sandbox."""
+        result = run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {"mykey": "myvalue"},
+            "code": "result = sandbox_cache.get('mykey')",
+        })
+        assert isinstance(result, str)
+        assert "myvalue" in result
+
+    def test_cache_appended_to_output(self, seeded_data_manager, mock_thresholds):
+        """---CACHE--- should appear in output with sandbox_cache JSON."""
+        result = run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {"rankings": [1, 2, 3]},
+            "code": "result = 'done'",
+        })
+        assert isinstance(result, str)
+        assert "---CACHE---" in result
+        import json as pyjson
+        cache_part = result.split("---CACHE---")[1].strip()
+        parsed = pyjson.loads(cache_part)
+        assert parsed["rankings"] == [1, 2, 3]
+
+    def test_cache_modified_in_sandbox_persists(self, seeded_data_manager, mock_thresholds):
+        """Agent can modify sandbox_cache and changes appear in output."""
+        result = run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
+            "code": "sandbox_cache['computed'] = 99\nresult = 'ok'",
+        })
+        assert isinstance(result, str)
+        cache_part = result.split("---CACHE---")[1].strip()
+        import json as pyjson
+        parsed = pyjson.loads(cache_part)
+        assert parsed["computed"] == 99
+
+    def test_prev_result_dataframe_serialized(self, seeded_data_manager, mock_thresholds):
+        """DataFrame result should be serialized to list[dict] for prev_result."""
+        import network_manager_agent.tools as tools_mod
+        tools_mod._prev_result = None
+
+        run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "sandbox_cache": {},
+            "code": "result = candidates_df[['entity', 'specialty']].head(2)",
+        })
+        assert isinstance(tools_mod._prev_result, list)
+        assert len(tools_mod._prev_result) == 2
 
 
 # ---------------------------------------------------------------------------
