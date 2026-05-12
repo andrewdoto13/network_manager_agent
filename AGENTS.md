@@ -26,7 +26,7 @@
 - **Core Logic**:
     - `src/network_manager_agent/__init__.py`: Package exports (`build_agent`, `AgentState`, `LLMConfig`, `create_llm`), version `0.1.0`.
     - `src/network_manager_agent/__main__.py`: Enables `python -m network_manager_agent` invocation.
-    - `src/network_manager_agent/config.py`: `LLMConfig` dataclass (env-var configurable), constants (`SUMMARIZE_THRESHOLD=14`, `MESSAGES_TO_ARCHIVE=7`, `SERVICE_AREA_BUFFER_MILES=20`).
+    - `src/network_manager_agent/config.py`: `LLMConfig` dataclass (env-var configurable), constants (`SUMMARIZE_THRESHOLD=14`, `SERVICE_AREA_BUFFER_MILES=20`).
     - `src/network_manager_agent/data.py`: `DataManager` singleton with column normalization, coordinate normalization, entity aggregation, schema profiling, and service area filtering.
     - `src/network_manager_agent/graph.py`: Graph orchestration and flow.
     - `src/network_manager_agent/nodes.py`: Node implementations (LLM reasoning, tool execution, state updates, summarization).
@@ -55,7 +55,7 @@
       -> (should_summarize) -> summarize_messages OR network_manager
     summarize_messages -> network_manager
     ```
-- **Summarization**: When message count exceeds `SUMMARIZE_THRESHOLD` (14), the `summarize_messages` node archives old messages into a running summary to manage context.
+- **Summarization**: When message count exceeds `SUMMARIZE_THRESHOLD` (14), the `summarize_messages` node keeps the last 3 messages in context and archives everything else into a running summary to preserve quantitative results while maintaining recent tool output visibility.
 - **Streaming UI**: `ui.py` provides real-time console output and writes action logs (`logs/thread_<id>/log.txt` and `logs/thread_<id>/log.jsonl`) with per-step details. Default log directory uses `PROJECT_ROOT / "logs"` so logs are consistent regardless of CWD (CLI vs notebook).
 
 ## Important Notes

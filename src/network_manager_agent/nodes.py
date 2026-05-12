@@ -12,7 +12,7 @@ from langchain_core.messages import (
 )
 from langgraph.prebuilt import ToolNode
 
-from .config import MESSAGES_TO_ARCHIVE, SUMMARIZE_THRESHOLD
+from .config import SUMMARIZE_THRESHOLD
 from .data import DataManager
 from langchain_deepseek import ChatDeepSeek
 from .state import AgentState
@@ -208,14 +208,10 @@ def summarize_messages(state: AgentState, llm: ChatDeepSeek):
     messages = state["messages"]
     existing_summary = state.get("summary", "")
 
-    last_message_to_summarize = MESSAGES_TO_ARCHIVE - 1
-
-    if (last_message_to_summarize + 1 < len(messages) and
-        isinstance(messages[last_message_to_summarize], AIMessage) and
-        isinstance(messages[last_message_to_summarize + 1], ToolMessage)):
-        last_message_to_summarize += 1
-
-    to_summarize = messages[:last_message_to_summarize + 1]
+    # Keep the last MESSAGES_TO_KEEP messages in context (user prompt + recent tool results).
+    # Summarize everything before that into the running summary.
+    MESSAGES_TO_KEEP = 3
+    to_summarize = messages[:-MESSAGES_TO_KEEP] if len(messages) > MESSAGES_TO_KEEP else messages
 
     instruction = f"""You are a task summarizer. Update the existing summary based on the new history provided below.
 

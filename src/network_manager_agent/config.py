@@ -22,8 +22,8 @@ class LLMConfig:
     model: str = os.getenv("LLM_MODEL", "llm")
 
 
-SUMMARIZE_THRESHOLD = 14
-MESSAGES_TO_ARCHIVE = SUMMARIZE_THRESHOLD // 2
+SUMMARIZE_THRESHOLD = 14  # Summarize when message count exceeds this
+# Summarization keeps last 3 messages in context, archives everything else into running summary
 SERVICE_AREA_BUFFER_MILES = 20  # Buffer added to max threshold when filtering service area
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
