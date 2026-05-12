@@ -205,6 +205,46 @@ class TestRunCode:
         })
         assert result == 2
 
+    def test_import_stripped_with_warning(self, seeded_data_manager, mock_thresholds):
+        result = run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "code": "import pandas as pd\nresult = 1",
+        })
+        assert isinstance(result, str)
+        assert "[sandbox] Stripped 1 import(s)" in result
+        assert "1" in result  # code still executed
+
+    def test_from_import_stripped_with_warning(self, seeded_data_manager, mock_thresholds):
+        result = run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "code": "from itertools import combinations\nresult = 1",
+        })
+        assert isinstance(result, str)
+        assert "[sandbox] Stripped 1 import(s)" in result
+        assert "1" in result
+
+    def test_indented_import_stripped(self, seeded_data_manager, mock_thresholds):
+        result = run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "code": "if True:\n    import json\n    result = 1",
+        })
+        assert isinstance(result, str)
+        assert "[sandbox] Stripped 1 import(s)" in result
+        assert "1" in result
+
+    def test_multiple_imports_stripped(self, seeded_data_manager, mock_thresholds):
+        result = run_code.invoke({
+            "network": [],
+            "county_specialty_thresholds": mock_thresholds,
+            "code": "import pandas as pd\nimport numpy as np\nresult = candidates_df.shape[0]",
+        })
+        assert isinstance(result, str)
+        assert "[sandbox] Stripped 2 import(s)" in result
+        assert "6" in result
+
 
 # ---------------------------------------------------------------------------
 # Geo utilities
@@ -234,3 +274,9 @@ class TestToolsList:
 
     def test_tools_count(self):
         assert len(TOOLS) == 2
+
+    def test_run_code_docstring_emphasizes_compute_coverage(self):
+        """run_code docstring must identify compute_coverage as definitive."""
+        doc = run_code.description
+        assert "compute_coverage" in doc
+        assert "definitive" in doc or "authoritative" in doc

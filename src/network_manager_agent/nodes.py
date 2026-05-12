@@ -58,21 +58,23 @@ network_df (currently contracted): filtered from candidates_df by the network st
 # SANDBOX
 Pre-injected: pd (pandas), np (numpy), json, math, functools, itertools, collections, BallTree, defaultdict
 Builtins: len, sorted, range, str, int, float, bool, set, list, dict, tuple, enumerate, zip, map, filter, isinstance, type, print, abs, round, min, max, sum, any, all
-** import is DISABLED. Each run_code call is a fresh sandbox — variables from previous calls are NOT available. **
+Each run_code call is a fresh sandbox — variables from previous calls are NOT available.
 
 compute_coverage(network_df, members_df, thresholds, candidates_df) → (list[dict], list[str])
   Each dict: {{state, county, specialty, members_with_access, total_members, coverage_percentage}}
 
 ## GUIDANCE
-- For proximity checks: use `BallTree` with haversine metric. Convert degrees to radians with `np.deg2rad()`, then `tree.query_radius()` with radius = `threshold_miles / 3958.8`.
-- For coverage simulation: use `compute_coverage()` on the baseline network, then on a simulated network (concat candidate providers), and compare deltas.
+- For exploration: `BallTree` can give fast proximity heuristics, but results are approximate. Always validate final answers with `compute_coverage()`.
+- For coverage simulation: use `compute_coverage()`. This is the authoritative function — it evaluates coverage per member, not per county or aggregate.
 - For filtering: use pandas boolean indexing, `isin()`, `groupby().agg()`. Remember `candidates_df` is provider-level — group by `entity` for entity-level summaries.
 
 # RULES
-1. Only call add_contract_entity with valid entity names from the data. Never invent entities, providers, or metrics.
-2. If required information is missing, ask the user for clarification instead of guessing.
-3. Be decisive. Present your best result with coverage numbers and stop. Do not repeat the same simulations.
-4. If the user asks for analysis or recommendations, present findings and stop. Do NOT call add_contract_entity in the same response.
+1. `compute_coverage()` is the definitive network coverage calculator. Any custom coverage approximation (BallTree, centroid distance, etc.) is heuristic only and MUST be validated against `compute_coverage()` before reporting results.
+2. NEVER write import statements in run_code. All modules (pd, np, json, math, itertools, collections, BallTree) are pre-injected.
+2. Only call add_contract_entity with valid entity names from the data. Never invent entities, providers, or metrics.
+3. If required information is missing, ask the user for clarification instead of guessing.
+4. Be decisive. Present your best result with coverage numbers and stop. Do not repeat the same simulations.
+5. If the user asks for analysis or recommendations, present findings and stop. Do NOT call add_contract_entity in the same response.
 '''
 
     messages_history = state.get("messages", [])

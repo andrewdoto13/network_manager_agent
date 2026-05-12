@@ -293,6 +293,27 @@ class TestNetworkManager:
         system_msg = call_args[0]
         assert "Previous progress here." in system_msg.content
 
+    def test_system_prompt_requires_compute_coverage_validation(self):
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke.return_value = AIMessage(content="OK")
+
+        state = {
+            "messages": [HumanMessage(content="Start")],
+            "county_specialty_thresholds": {},
+            "summary": "",
+        }
+
+        with patch("network_manager_agent.nodes.DataManager") as MockDM:
+            mock_dm = MagicMock()
+            MockDM.return_value = mock_dm
+
+            network_manager(state, mock_llm)
+
+        call_args = mock_llm.bind_tools.return_value.invoke.call_args[0][0]
+        system_msg = call_args[0]
+        assert "compute_coverage" in system_msg.content
+        assert "definitive" in system_msg.content or "authoritative" in system_msg.content
+
     def test_returns_ai_response_in_messages(self):
         mock_llm = MagicMock()
         ai_resp = AIMessage(content="Response", id="ai_1")

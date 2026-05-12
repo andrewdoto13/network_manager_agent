@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 
 import collections
 import functools
@@ -218,7 +219,8 @@ def run_code(
 ):
     """Execute Python/pandas code to filter, analyze, or simulate network changes.
 
-    **IMPORTANT**: Each call is a completely fresh sandbox — variables from previous calls are NOT available. Do NOT write import statements.
+    **NEVER write import statements** — all modules are pre-injected: pd, np, json, math, functools, itertools, collections, BallTree, defaultdict.
+    Each call is a completely fresh sandbox — variables from previous calls are NOT available.
 
     Available variables:
       - candidates_df: Provider-level candidate data. Columns: entity, specialty, lat, lon, effectiveness, efficiency, new_patient_claims, ...
@@ -233,7 +235,7 @@ def run_code(
       errors_list: list of validation error strings (check this for issues).
 
     Assign your result to 'result' (must be a JSON-serializable variable). Timeout: 60 seconds.
-    Tip: Use BallTree for haversine distance queries; use compute_coverage() for coverage simulation.
+    Tip: compute_coverage() is the definitive coverage calculator (member-by-member). BallTree proximity checks are heuristic only — validate with compute_coverage().
     """
     dm = DataManager()
 
@@ -301,6 +303,18 @@ def run_code(
     import io
     import sys
     result_holder = {"value": None, "stdout": "", "error": None}
+
+    _IMPORT_LINE = re.compile(
+        r'^\s*(?:import\s+.+|from\s+.+?\s+import\s+.+?)\s*(?:#.*)?$',
+        re.MULTILINE
+    )
+    import_warnings = _IMPORT_LINE.findall(code)
+    if import_warnings:
+        code = _IMPORT_LINE.sub('', code).strip()
+        code = (
+            f'print("[sandbox] Stripped {len(import_warnings)} import(s) — modules are pre-injected, use them directly.")\n'
+            + code
+        )
 
     def _execute():
         try:
