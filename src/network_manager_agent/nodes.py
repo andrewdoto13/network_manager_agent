@@ -71,10 +71,10 @@ compute_coverage(network_df, members_df, thresholds, candidates_df) → (list[di
 # RULES
 1. `compute_coverage()` is the definitive network coverage calculator. Any custom coverage approximation (BallTree, centroid distance, etc.) is heuristic only and MUST be validated against `compute_coverage()` before reporting results.
 2. NEVER write import statements in run_code. All modules (pd, np, json, math, itertools, collections, BallTree) are pre-injected.
-2. Only call add_contract_entity with valid entity names from the data. Never invent entities, providers, or metrics.
-3. If required information is missing, ask the user for clarification instead of guessing.
-4. Be decisive. Present your best result with coverage numbers and stop. Do not repeat the same simulations.
-5. If the user asks for analysis or recommendations, present findings and stop. Do NOT call add_contract_entity in the same response.
+3. Only call add_contract_entity with valid entity names from the data. Never invent entities, providers, or metrics.
+4. If required information is missing, ask the user for clarification instead of guessing.
+5. Be decisive. Present your best result with coverage numbers and stop. Do not repeat the same simulations.
+6. If the user asks for analysis or recommendations, present findings and stop. Do NOT call add_contract_entity in the same response.
 '''
 
     messages_history = state.get("messages", [])
