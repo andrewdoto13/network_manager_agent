@@ -76,7 +76,7 @@ compute_coverage(network_df, members_df, thresholds, candidates_df) -> (list[dic
 - BallTree gives fast proximity heuristics but is approximate. Always validate with compute_coverage().
 - compute_coverage() is authoritative: it evaluates coverage per member, not per county or aggregate.
 - Use pandas boolean indexing, isin(), groupby().agg(). Remember candidates_df is provider-level - group by entity for entity-level summaries.
-- Chain calls with prev_result. Persist expensive computations in sandbox_cache.
+- Each run_code call is a fresh sandbox — variables from prior calls are lost. Use `prev_result` to chain outputs, or `sandbox_cache` to persist data across calls. Write self-contained code.
 
 ## EXAMPLE
   # Explore - rank entities by effectiveness
@@ -203,15 +203,42 @@ def _get_content(m: Any) -> str:
     return str(m.content)
 
 
+def _find_safe_boundary(messages: list, keep_count: int) -> tuple:
+    """Find safe boundary that doesn't split AI+Tool pairs.
+
+    Returns (to_summarize, to_keep) where to_keep contains at least keep_count
+    messages, plus any AI+Tool pairs that would be orphaned at the boundary.
+    """
+    if len(messages) <= keep_count:
+        return (messages, [])
+
+    to_summarize = list(messages[:-keep_count])
+    to_keep = list(messages[-keep_count:])
+
+    # Check if last message in to_summarize is an AI with tool calls
+    # If so, move it and its Tool responses to kept set to avoid orphaning
+    while to_summarize and isinstance(to_summarize[-1], AIMessage):
+        last_ai = to_summarize[-1]
+        if not last_ai.tool_calls:
+            break
+        # Move this AI message to kept set
+        to_summarize.pop()
+        to_keep.insert(0, last_ai)
+        # Also move any ToolMessages that follow (they should already be in to_keep)
+        break
+
+    return (to_summarize, to_keep)
+
+
 def summarize_messages(state: AgentState, llm: ChatDeepSeek):
     """Summarize old messages to manage context window size."""
     messages = state["messages"]
     existing_summary = state.get("summary", "")
 
     # Keep the last MESSAGES_TO_KEEP messages in context (user prompt + recent tool results).
-    # Summarize everything before that into the running summary.
+    # Use safe boundary to avoid splitting AI+Tool pairs.
     MESSAGES_TO_KEEP = 3
-    to_summarize = messages[:-MESSAGES_TO_KEEP] if len(messages) > MESSAGES_TO_KEEP else messages
+    to_summarize, to_keep = _find_safe_boundary(messages, MESSAGES_TO_KEEP)
 
     instruction = f"""You are a task summarizer. Update the existing summary based on the new history provided below.
 
@@ -232,9 +259,11 @@ def summarize_messages(state: AgentState, llm: ChatDeepSeek):
     5. Preserve ALL quantitative results from tool output: exact coverage percentages, provider counts, entity names, distances, rankings. Do not replace numbers with vague descriptions.
     6. When listing entities, include their key metrics (e.g., "MyMichigan Health: 124 cardio providers, eff 5.0").
     7. Always include the best combination or result found so far, with exact numbers.
+    8. Preserve the sequence of tool calls and outcomes as a reasoning chain. Note which simulations built on which prior results.
     """
 
-    history_text = "\n".join([f"{m.type}: {_get_content(m)}" for m in to_summarize])
+    # Summarize ALL messages (not just deleted ones) for complete picture
+    history_text = "\n".join([f"{m.type}: {_get_content(m)}" for m in messages])
     final_prompt = f"{instruction}\n\nHISTORY TO SUMMARIZE:\n{history_text}\n\nSummary:"
 
     response = llm.invoke([HumanMessage(content=final_prompt)])
@@ -251,6 +280,7 @@ def summarize_messages(state: AgentState, llm: ChatDeepSeek):
     if not updated_summary:
         updated_summary = existing_summary or "Summary unavailable."
 
+    # Only remove messages before the safe boundary (not orphaned pairs)
     messages_to_remove = [RemoveMessage(id=m.id) for m in to_summarize]
 
     return {
