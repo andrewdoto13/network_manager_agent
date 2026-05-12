@@ -224,7 +224,7 @@ def run_code(
 ):
     """Execute Python/pandas code to filter, analyze, or simulate network changes.
 
-    Your code has pd, np, json, math, itertools, collections, BallTree, defaultdict already available — just use them directly.
+    pd, np, json, math, itertools, collections, BallTree, defaultdict, functools are pre-loaded. Use them directly. Do not write import statements.
     Each call is a fresh sandbox — user variables are NOT preserved between calls.
 
     Available variables:
@@ -319,12 +319,11 @@ def run_code(
         r'^\s*(?:import\s+.+|from\s+.+?\s+import\s+.+?)\s*(?:#.*)?$',
         re.MULTILINE
     )
-    import_warnings = _IMPORT_LINE.findall(code)
-    if import_warnings:
-        code = _IMPORT_LINE.sub('', code).strip()
-        code = (
-            f'print("[sandbox] Stripped {len(import_warnings)} import(s) — modules are pre-injected, use them directly.")\n'
-            + code
+    if _IMPORT_LINE.search(code):
+        return (
+            "Error: Import statements are disabled. "
+            "pd, np, json, math, itertools, collections, BallTree, defaultdict, functools "
+            "are pre-loaded — use them directly without import."
         )
 
     def _execute():
