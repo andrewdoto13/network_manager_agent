@@ -20,9 +20,6 @@ from typing import Annotated
 from .data import DataManager
 
 
-# Ephemeral: stores last run_code result for prev_result injection
-_prev_result: Any = None
-
 # Ephemeral: stores last sandbox_cache snapshot for state persistence
 _last_sandbox_cache: dict = {}
 
@@ -235,12 +232,11 @@ def run_code(
       - members_df: Member locations. Columns: state, county, lat, lon, ...
       - thresholds: Service area config dict, e.g. {"mi": {"wayne": {"general practice": 20.0}}}
       - compute_coverage: See below.
-      - sandbox_cache: Persistent dict. Your 'result' is auto-saved as sandbox_cache["last_result"].
+      - sandbox_cache: Persistent dict for cross-call state. Save: sandbox_cache["key"] = value. Retrieve: sandbox_cache.get("key").
 
     STATE PERSISTENCE:
       Each call is a fresh sandbox — all local variables are lost when the call ends.
-      Your 'result' variable is automatically saved to sandbox_cache["last_result"].
-      For other data, save explicitly before your code finishes:
+      Only sandbox_cache persists. Save data explicitly before your code finishes:
         sandbox_cache["entity_stats"] = df.to_dict("records")   # save
         cached = sandbox_cache.get("entity_stats")              # retrieve next call
       Data NOT saved to sandbox_cache will not be available in future calls.
@@ -250,8 +246,7 @@ def run_code(
       coverage_list: list of dicts with {state, county, specialty, members_with_access, total_members, coverage_percentage}
       errors_list: list of validation error strings (check this for issues).
 
-    Assign your result to 'result' (must be a JSON-serializable variable). Timeout: 60 seconds.
-    Tip: compute_coverage() is the definitive coverage calculator (member-by-member). BallTree proximity checks are heuristic only — validate with compute_coverage().
+    Tip: compute_coverage() is the definitive coverage calculator (member-by-member). BallTree proximity checks are heuristic only — validate with compute_coverage(). Timeout: 60 seconds.
     """
     global _prev_result, _last_sandbox_cache
 
@@ -315,7 +310,6 @@ def run_code(
         "members_df": dm.get_members_df(),
         "thresholds": county_specialty_thresholds,
         "compute_coverage": compute_coverage,
-        "prev_result": _prev_result,
         "sandbox_cache": sandbox_cache,
     }
 
@@ -365,22 +359,6 @@ def run_code(
 
     result = result_holder["value"]
     stdout = result_holder["stdout"].strip()
-
-    # Store result for prev_result injection (JSON-serializable)
-    if isinstance(result, pd.DataFrame):
-        _prev_result = result.to_dict(orient="records")
-    elif isinstance(result, (dict, list, str, int, float, bool, type(None))):
-        _prev_result = result
-    else:
-        _prev_result = str(result)
-
-    # Persist result in sandbox_cache for cross-call access
-    persisted_result = _prev_result
-    try:
-        persisted_result = json.loads(json.dumps(_prev_result))
-    except (TypeError, ValueError):
-        pass
-    sandbox_cache["last_result"] = persisted_result
 
     # Truncate stdout to prevent context flooding
     _STDOUT_MAX = 2000

@@ -60,9 +60,8 @@ NOTE: All string values are lowercased and whitespace-stripped.
 Pre-loaded modules (use directly, no declaration needed): pd, np, json, math, itertools, collections, defaultdict, functools, BallTree
 Available builtins: len, sorted, range, str, int, float, bool, set, list, dict, tuple, enumerate, zip, map, filter, isinstance, type, print, abs, round, min, max, sum, any, all
 
-Cross-call state:
-  - sandbox_cache: persistent dict. Your 'result' is auto-saved as sandbox_cache["last_result"].
-    Store other data with sandbox_cache["key"] = value. Only JSON-serializable types.
+  Cross-call state:
+   - sandbox_cache: persistent dict. Save with sandbox_cache["key"] = value. Retrieve with sandbox_cache.get("key"). Only JSON-serializable types.
 
 compute_coverage(network_df, members_df, thresholds, candidates_df) -> (list[dict], list[str])
   Each dict: {{state, county, specialty, members_with_access, total_members, coverage_percentage}}
@@ -71,7 +70,7 @@ compute_coverage(network_df, members_df, thresholds, candidates_df) -> (list[dic
 - BallTree gives fast proximity heuristics but is approximate.
 - compute_coverage() is authoritative: it evaluates coverage per member, not per county or aggregate.
 - Use pandas boolean indexing, isin(), groupby().agg(). Remember candidates_df is provider-level - group by entity for entity-level summaries.
-- Each run_code call is a fresh sandbox — only sandbox_cache persists. Retrieve prior result with sandbox_cache.get("last_result"). Write self-contained code.
+- Each run_code call is a fresh sandbox — only sandbox_cache persists. Write self-contained code.
 
 ## EXAMPLE
   # --- Call 1: compute once, cache for later ---
@@ -86,7 +85,7 @@ compute_coverage(network_df, members_df, thresholds, candidates_df) -> (list[dic
   top_entities = entity_stats.nlargest(5, "avg_eff")["entity"].tolist()
   sim_df = candidates_df[candidates_df["entity"].isin(top_entities)]
   coverage, errors = compute_coverage(sim_df, members_df, thresholds, candidates_df)
-  result = {{"coverage": coverage}}
+  sandbox_cache["coverage"] = coverage
 
 ## RULES
 1. compute_coverage() is the definitive coverage calculator. Report only results validated by compute_coverage().

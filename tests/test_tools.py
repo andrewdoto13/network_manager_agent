@@ -164,51 +164,56 @@ class TestAddContractEntity:
 
 class TestRunCode:
     def test_simple_expression(self, seeded_data_manager, mock_thresholds):
-        result = run_code.invoke({
+        import network_manager_agent.tools as tools_mod
+        run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
             "sandbox_cache": {},
-            "code": "result = 2 + 2",
+            "code": "sandbox_cache['answer'] = 2 + 2",
         })
-        assert result == 4
+        assert tools_mod._last_sandbox_cache["answer"] == 4
 
     def test_pandas_query(self, seeded_data_manager, mock_thresholds):
-        result = run_code.invoke({
+        import network_manager_agent.tools as tools_mod
+        run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
             "sandbox_cache": {},
-            "code": "result = candidates_df.shape[0]",
+            "code": "sandbox_cache['count'] = candidates_df.shape[0]",
         })
-        assert result == 6
+        assert tools_mod._last_sandbox_cache["count"] == 6
 
     def test_dataframe_result(self, seeded_data_manager, mock_thresholds):
-        result = run_code.invoke({
+        import network_manager_agent.tools as tools_mod
+        run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
             "sandbox_cache": {},
-            "code": "result = candidates_df[['entity', 'specialty']].head(2)",
+            "code": "sandbox_cache['data'] = candidates_df[['entity', 'specialty']].head(2).to_dict('records')",
         })
-        assert isinstance(result, list)
-        assert len(result) == 2
+        data = tools_mod._last_sandbox_cache["data"]
+        assert isinstance(data, list)
+        assert len(data) == 2
 
     def test_error_handling(self, seeded_data_manager, mock_thresholds):
-        result = run_code.invoke({
+        output = run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
             "sandbox_cache": {},
-            "code": "result = undefined_variable + 1",
+            "code": "sandbox_cache['err'] = undefined_variable + 1",
         })
-        assert isinstance(result, str)
-        assert "Error:" in result
+        assert isinstance(output, str)
+        assert "Error:" in output
 
     def test_compute_coverage_in_sandbox(self, seeded_data_manager, mock_thresholds):
-        result = run_code.invoke({
+        import network_manager_agent.tools as tools_mod
+        run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
             "sandbox_cache": {},
-            "code": "cov, errs = compute_coverage(network_df, members_df, thresholds, candidates_df)\nresult = cov.__len__()",
+            "code": "cov, errs = compute_coverage(network_df, members_df, thresholds, candidates_df)\nsandbox_cache['count'] = cov.__len__()",
         })
-        assert result == 2
+        assert tools_mod._last_sandbox_cache["count"] == 2
 
     def test_import_returns_error(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
@@ -250,90 +255,43 @@ class TestRunCode:
         assert isinstance(result, str)
         assert "Error: Import statements are disabled" in result
 
-    def test_prev_result_none_on_first_call(self, seeded_data_manager, mock_thresholds):
-        """prev_result should be None on first call."""
+    def test_sandbox_cache_injected(self, seeded_data_manager, mock_thresholds):
+        """sandbox_cache should be available in the sandbox."""
         import network_manager_agent.tools as tools_mod
-        tools_mod._prev_result = None
-
-        result = run_code.invoke({
-            "network": [],
-            "county_specialty_thresholds": mock_thresholds,
-            "sandbox_cache": {},
-            "code": "result = prev_result",
-        })
-        assert result is None
-
-    def test_prev_result_holds_last_result(self, seeded_data_manager, mock_thresholds):
-        """prev_result should hold the result from the previous call."""
-        import network_manager_agent.tools as tools_mod
-        tools_mod._prev_result = None
-
-        # First call sets result
         run_code.invoke({
             "network": [],
             "county_specialty_thresholds": mock_thresholds,
-            "sandbox_cache": {},
-            "code": "result = 42",
-        })
-
-        # Second call reads prev_result
-        second = run_code.invoke({
-            "network": [],
-            "county_specialty_thresholds": mock_thresholds,
-            "sandbox_cache": {},
-            "code": "result = prev_result",
-        })
-        assert second == 42
-
-    def test_sandbox_cache_injected(self, seeded_data_manager, mock_thresholds):
-        """sandbox_cache should be available in the sandbox."""
-        result = run_code.invoke({
-            "network": [],
-            "county_specialty_thresholds": mock_thresholds,
             "sandbox_cache": {"mykey": "myvalue"},
-            "code": "result = sandbox_cache.get('mykey')",
+            "code": "sandbox_cache['retrieved'] = sandbox_cache.get('mykey')",
         })
-        assert result == "myvalue"
+        assert tools_mod._last_sandbox_cache["retrieved"] == "myvalue"
 
     def test_cache_appended_to_output(self, seeded_data_manager, mock_thresholds):
         """Cache is persisted via _last_sandbox_cache, not embedded in tool output."""
         import network_manager_agent.tools as tools_mod
         # Call func directly to bypass InjectedState filtering in @tool decorator
-        result = run_code.func(
+        run_code.func(
             network=[],
             county_specialty_thresholds=mock_thresholds,
             sandbox_cache={"rankings": [1, 2, 3]},
-            code="result = 'done'",
+            code="sandbox_cache['status'] = 'done'",
         )
-        assert result == "done"
         assert tools_mod._last_sandbox_cache["rankings"] == [1, 2, 3]
+        assert tools_mod._last_sandbox_cache["status"] == "done"
 
     def test_cache_modified_in_sandbox_persists(self, seeded_data_manager, mock_thresholds):
         """Agent can modify sandbox_cache and changes persist via _last_sandbox_cache."""
         import network_manager_agent.tools as tools_mod
         # Call func directly to bypass InjectedState filtering in @tool decorator
-        result = run_code.func(
+        run_code.func(
             network=[],
             county_specialty_thresholds=mock_thresholds,
             sandbox_cache={},
-            code="sandbox_cache['computed'] = 99\nresult = 'ok'",
+            code="sandbox_cache['computed'] = 99",
         )
-        assert result == "ok"
         assert tools_mod._last_sandbox_cache["computed"] == 99
 
-    def test_prev_result_dataframe_serialized(self, seeded_data_manager, mock_thresholds):
-        """DataFrame result should be serialized to list[dict] for prev_result."""
-        import network_manager_agent.tools as tools_mod
-        tools_mod._prev_result = None
-
-        run_code.invoke({
-            "network": [],
-            "county_specialty_thresholds": mock_thresholds,
-            "sandbox_cache": {},
-            "code": "result = candidates_df[['entity', 'specialty']].head(2)",
-        })
-        assert isinstance(tools_mod._prev_result, list)
-        assert len(tools_mod._prev_result) == 2
+ 
 
 
 # ---------------------------------------------------------------------------
