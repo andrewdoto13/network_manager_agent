@@ -170,8 +170,7 @@ class TestRunCode:
             "sandbox_cache": {},
             "code": "result = 2 + 2",
         })
-        assert "---CACHE---" in result
-        assert "4" in result
+        assert result == 4
 
     def test_pandas_query(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
@@ -180,8 +179,7 @@ class TestRunCode:
             "sandbox_cache": {},
             "code": "result = candidates_df.shape[0]",
         })
-        assert "---CACHE---" in result
-        assert "6" in result
+        assert result == 6
 
     def test_dataframe_result(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
@@ -190,7 +188,8 @@ class TestRunCode:
             "sandbox_cache": {},
             "code": "result = candidates_df[['entity', 'specialty']].head(2)",
         })
-        assert "---CACHE---" in result
+        assert isinstance(result, list)
+        assert len(result) == 2
 
     def test_error_handling(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
@@ -209,8 +208,7 @@ class TestRunCode:
             "sandbox_cache": {},
             "code": "cov, errs = compute_coverage(network_df, members_df, thresholds, candidates_df)\nresult = cov.__len__()",
         })
-        assert "---CACHE---" in result
-        assert "2" in result
+        assert result == 2
 
     def test_import_returns_error(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
@@ -263,9 +261,7 @@ class TestRunCode:
             "sandbox_cache": {},
             "code": "result = prev_result",
         })
-        # Output includes cache suffix; prev_result=None means the main output is "None"
-        assert "---CACHE---" in result
-        assert result.split("---CACHE---")[0].strip() == "None"
+        assert result is None
 
     def test_prev_result_holds_last_result(self, seeded_data_manager, mock_thresholds):
         """prev_result should hold the result from the previous call."""
@@ -287,9 +283,7 @@ class TestRunCode:
             "sandbox_cache": {},
             "code": "result = prev_result",
         })
-        # Result includes cache suffix
-        assert isinstance(second, str)
-        assert "42" in second
+        assert second == 42
 
     def test_sandbox_cache_injected(self, seeded_data_manager, mock_thresholds):
         """sandbox_cache should be available in the sandbox."""
@@ -299,37 +293,33 @@ class TestRunCode:
             "sandbox_cache": {"mykey": "myvalue"},
             "code": "result = sandbox_cache.get('mykey')",
         })
-        assert isinstance(result, str)
-        assert "myvalue" in result
+        assert result == "myvalue"
 
     def test_cache_appended_to_output(self, seeded_data_manager, mock_thresholds):
-        """---CACHE--- should appear in output with sandbox_cache JSON."""
-        result = run_code.invoke({
-            "network": [],
-            "county_specialty_thresholds": mock_thresholds,
-            "sandbox_cache": {"rankings": [1, 2, 3]},
-            "code": "result = 'done'",
-        })
-        assert isinstance(result, str)
-        assert "---CACHE---" in result
-        import json as pyjson
-        cache_part = result.split("---CACHE---")[1].strip()
-        parsed = pyjson.loads(cache_part)
-        assert parsed["rankings"] == [1, 2, 3]
+        """Cache is persisted via _last_sandbox_cache, not embedded in tool output."""
+        import network_manager_agent.tools as tools_mod
+        # Call func directly to bypass InjectedState filtering in @tool decorator
+        result = run_code.func(
+            network=[],
+            county_specialty_thresholds=mock_thresholds,
+            sandbox_cache={"rankings": [1, 2, 3]},
+            code="result = 'done'",
+        )
+        assert result == "done"
+        assert tools_mod._last_sandbox_cache["rankings"] == [1, 2, 3]
 
     def test_cache_modified_in_sandbox_persists(self, seeded_data_manager, mock_thresholds):
-        """Agent can modify sandbox_cache and changes appear in output."""
-        result = run_code.invoke({
-            "network": [],
-            "county_specialty_thresholds": mock_thresholds,
-            "sandbox_cache": {},
-            "code": "sandbox_cache['computed'] = 99\nresult = 'ok'",
-        })
-        assert isinstance(result, str)
-        cache_part = result.split("---CACHE---")[1].strip()
-        import json as pyjson
-        parsed = pyjson.loads(cache_part)
-        assert parsed["computed"] == 99
+        """Agent can modify sandbox_cache and changes persist via _last_sandbox_cache."""
+        import network_manager_agent.tools as tools_mod
+        # Call func directly to bypass InjectedState filtering in @tool decorator
+        result = run_code.func(
+            network=[],
+            county_specialty_thresholds=mock_thresholds,
+            sandbox_cache={},
+            code="sandbox_cache['computed'] = 99\nresult = 'ok'",
+        )
+        assert result == "ok"
+        assert tools_mod._last_sandbox_cache["computed"] == 99
 
     def test_prev_result_dataframe_serialized(self, seeded_data_manager, mock_thresholds):
         """DataFrame result should be serialized to list[dict] for prev_result."""

@@ -164,8 +164,10 @@ class TestUpdateState:
         assert result == {}
 
     def test_extracts_sandbox_cache_from_run_code(self):
+        from network_manager_agent import tools as tools_mod
+        tools_mod._last_sandbox_cache = {"rankings": [1, 2, 3]}
         tool_msg = ToolMessage(
-            content="some output\n---CACHE---\n{\"rankings\": [1, 2, 3]}",
+            content="some output",
             tool_call_id="1",
             name="run_code",
         )
@@ -175,8 +177,10 @@ class TestUpdateState:
         assert result["sandbox_cache"]["rankings"] == [1, 2, 3]
 
     def test_cache_shallow_merges_with_existing(self):
+        from network_manager_agent import tools as tools_mod
+        tools_mod._last_sandbox_cache = {"new_key": "new_val"}
         tool_msg = ToolMessage(
-            content="output\n---CACHE---\n{\"new_key\": \"new_val\"}",
+            content="output",
             tool_call_id="1",
             name="run_code",
         )
@@ -189,8 +193,10 @@ class TestUpdateState:
         assert result["sandbox_cache"]["new_key"] == "new_val"
 
     def test_cache_overwrites_existing_keys(self):
+        from network_manager_agent import tools as tools_mod
+        tools_mod._last_sandbox_cache = {"key": "updated"}
         tool_msg = ToolMessage(
-            content="---CACHE---\n{\"key\": \"updated\"}",
+            content="output",
             tool_call_id="1",
             name="run_code",
         )
@@ -202,6 +208,8 @@ class TestUpdateState:
         assert result["sandbox_cache"]["key"] == "updated"
 
     def test_no_cache_marker_returns_empty(self):
+        from network_manager_agent import tools as tools_mod
+        tools_mod._last_sandbox_cache = {}
         tool_msg = ToolMessage(
             content="just normal output",
             tool_call_id="1",
@@ -212,8 +220,11 @@ class TestUpdateState:
         assert result == {}
 
     def test_cache_invalid_json_returns_empty(self):
+        """Empty _last_sandbox_cache means no cache update."""
+        from network_manager_agent import tools as tools_mod
+        tools_mod._last_sandbox_cache = {}
         tool_msg = ToolMessage(
-            content="output\n---CACHE---\n{not valid json}",
+            content="output",
             tool_call_id="1",
             name="run_code",
         )
@@ -222,13 +233,15 @@ class TestUpdateState:
         assert result == {}
 
     def test_entities_and_cache_extracted_together(self):
+        from network_manager_agent import tools as tools_mod
+        tools_mod._last_sandbox_cache = {"data": [1, 2]}
         entity_msg = ToolMessage(
             content=json.dumps({"added_entities": ["Entity A"]}),
             tool_call_id="1",
             name="add_contract_entity",
         )
         code_msg = ToolMessage(
-            content="output\n---CACHE---\n{\"data\": [1, 2]}",
+            content="output",
             tool_call_id="2",
             name="run_code",
         )

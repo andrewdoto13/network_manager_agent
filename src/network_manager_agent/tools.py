@@ -23,6 +23,9 @@ from .data import DataManager
 # Ephemeral: stores last run_code result for prev_result injection
 _prev_result: Any = None
 
+# Ephemeral: stores last sandbox_cache snapshot for state persistence
+_last_sandbox_cache: dict = {}
+
 
 def _blocked_import(name: str, *args, **kwargs):
     raise ImportError(
@@ -225,7 +228,6 @@ def run_code(
     """Execute Python/pandas code to filter, analyze, or simulate network changes.
 
     pd, np, json, math, itertools, collections, BallTree, defaultdict, functools are pre-loaded. Use them directly. Do not write import statements.
-    Each call is a fresh sandbox — user variables are NOT preserved between calls.
 
     Available variables:
       - candidates_df: Provider-level candidate data. Columns: entity, specialty, lat, lon, effectiveness, efficiency, new_patient_claims, ...
@@ -233,8 +235,15 @@ def run_code(
       - members_df: Member locations. Columns: state, county, lat, lon, ...
       - thresholds: Service area config dict, e.g. {"mi": {"wayne": {"general practice": 20.0}}}
       - compute_coverage: See below.
-      - prev_result: JSON-serialized result from the previous run_code call (None on first call). Use to chain operations.
-      - sandbox_cache: Persistent dict you can read/write. Use `sandbox_cache["key"] = value` to store data across calls. ONLY store JSON-serializable types (dict, list, str, int, float, bool, None). Convert DataFrames with `.to_dict('records')`.
+      - sandbox_cache: Persistent dict. Your 'result' is auto-saved as sandbox_cache["last_result"].
+
+    STATE PERSISTENCE:
+      Each call is a fresh sandbox — all local variables are lost when the call ends.
+      Your 'result' variable is automatically saved to sandbox_cache["last_result"].
+      For other data, save explicitly before your code finishes:
+        sandbox_cache["entity_stats"] = df.to_dict("records")   # save
+        cached = sandbox_cache.get("entity_stats")              # retrieve next call
+      Data NOT saved to sandbox_cache will not be available in future calls.
 
     compute_coverage(network_df, members_df, thresholds, candidates_df) → (coverage_list, errors_list)
       Computes per-county-and-specialty member coverage using haversine distance.
@@ -244,7 +253,7 @@ def run_code(
     Assign your result to 'result' (must be a JSON-serializable variable). Timeout: 60 seconds.
     Tip: compute_coverage() is the definitive coverage calculator (member-by-member). BallTree proximity checks are heuristic only — validate with compute_coverage().
     """
-    global _prev_result
+    global _prev_result, _last_sandbox_cache
 
     dm = DataManager()
 
@@ -365,6 +374,14 @@ def run_code(
     else:
         _prev_result = str(result)
 
+    # Persist result in sandbox_cache for cross-call access
+    persisted_result = _prev_result
+    try:
+        persisted_result = json.loads(json.dumps(_prev_result))
+    except (TypeError, ValueError):
+        pass
+    sandbox_cache["last_result"] = persisted_result
+
     # Truncate stdout to prevent context flooding
     _STDOUT_MAX = 2000
     if len(stdout) > _STDOUT_MAX:
@@ -377,19 +394,18 @@ def run_code(
     else:
         output = str(result)
 
-    # Append sandbox_cache for persistence (serialize each key individually)
-    serializable_cache = {}
+    # Persist sandbox_cache snapshot for update_state to pick up (do NOT embed in output)
+    serializable_cache: dict[str, Any] = {}
     for _k, _v in sandbox_cache.items():
         try:
-            json.dumps(_v)
-            serializable_cache[_k] = _v
+            serializable_cache[_k] = json.loads(json.dumps(_v))
         except (TypeError, ValueError):
             pass
-    cache_suffix = f"\n---CACHE---\n{json.dumps(serializable_cache)}"
+    _last_sandbox_cache = serializable_cache
 
     if stdout:
-        return f"[stdout]\n{stdout}\n[/stdout]\n{output}{cache_suffix}" if output else f"[stdout]\n{stdout}\n[/stdout]{cache_suffix}"
-    return f"{output}{cache_suffix}"
+        return f"[stdout]\n{stdout}\n[/stdout]\n{output}" if output else f"[stdout]\n{stdout}\n[/stdout]"
+    return output
 
 
 TOOLS = [add_contract_entity, run_code]
