@@ -54,6 +54,7 @@ You are evaluating member coverage for these county-specialty combinations:
 candidates_df (provider-level): {cand_cols}
 members_df (member-level): {mem_cols}
 network_df (currently contracted): filtered from candidates_df by the network state
+NOTE: All string values are lowercased and whitespace-stripped.
 
 # SANDBOX
 Pre-loaded modules (use directly, no declaration needed): pd, np, json, math, itertools, collections, defaultdict, functools, BallTree
@@ -79,14 +80,19 @@ compute_coverage(network_df, members_df, thresholds, candidates_df) -> (list[dic
 - Each run_code call is a fresh sandbox — variables from prior calls are lost. Use `prev_result` to chain outputs, or `sandbox_cache` to persist data across calls. Write self-contained code.
 
 ## EXAMPLE
-  # Explore - rank entities by effectiveness
-  entities = candidates_df.groupby("entity").agg(count=("entity","count"), avg_eff=("effectiveness","mean")).reset_index()
-  # Simulate - build a candidate network DataFrame
-  sim_df = candidates_df[candidates_df["entity"].isin(["entity_a", "entity_b"])]
-  # Validate - authoritative coverage check
+  # --- Call 1: compute once, cache for later ---
+  entity_stats = candidates_df.groupby("entity").agg(
+      count=("entity", "count"),
+      avg_eff=("effectiveness", "mean")
+  ).reset_index()
+  sandbox_cache["entity_stats"] = entity_stats.to_dict("records")
+
+  # --- Call 2: read from cache, use in simulation ---
+  entity_stats = pd.DataFrame(sandbox_cache.get("entity_stats", []))
+  top_entities = entity_stats.nlargest(5, "avg_eff")["entity"].tolist()
+  sim_df = candidates_df[candidates_df["entity"].isin(top_entities)]
   coverage, errors = compute_coverage(sim_df, members_df, thresholds, candidates_df)
-  # Report - assign JSON-serializable result
-  result = {{"coverage": coverage, "recommendation": "..."}}
+  result = {{"coverage": coverage}}
 
 ## RULES
 1. compute_coverage() is the definitive coverage calculator. Report only results validated by compute_coverage().

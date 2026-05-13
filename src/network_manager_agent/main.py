@@ -45,8 +45,6 @@ def _clear_thread_state(thread_id: str, db_path: str, log_dir: Path) -> None:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
             cursor.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
-            cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            cursor.execute("VACUUM")
             conn.commit()
         db_cleared = True
 

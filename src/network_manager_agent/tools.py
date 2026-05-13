@@ -377,12 +377,15 @@ def run_code(
     else:
         output = str(result)
 
-    # Append sandbox_cache for persistence (skip non-serializable entries)
-    try:
-        cache_json = json.dumps(sandbox_cache)
-    except (TypeError, ValueError):
-        cache_json = "{}"
-    cache_suffix = f"\n---CACHE---\n{cache_json}"
+    # Append sandbox_cache for persistence (serialize each key individually)
+    serializable_cache = {}
+    for _k, _v in sandbox_cache.items():
+        try:
+            json.dumps(_v)
+            serializable_cache[_k] = _v
+        except (TypeError, ValueError):
+            pass
+    cache_suffix = f"\n---CACHE---\n{json.dumps(serializable_cache)}"
 
     if stdout:
         return f"[stdout]\n{stdout}\n[/stdout]\n{output}{cache_suffix}" if output else f"[stdout]\n{stdout}\n[/stdout]{cache_suffix}"
