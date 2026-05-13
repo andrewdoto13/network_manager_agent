@@ -6,6 +6,12 @@ from langgraph.graph import MessagesState
 import operator
 
 
+def _merge_dict(existing: dict, new: dict) -> dict:
+    merged = dict(existing)
+    merged.update(new)
+    return merged
+
+
 class AgentState(MessagesState):
     """State for the network management agent.
 
@@ -16,6 +22,6 @@ class AgentState(MessagesState):
     network: Annotated[list[str], operator.add] = []
     summary: str = ""
     county_specialty_thresholds: dict[str, dict[str, float]] = {}
-    sandbox_cache: dict = {}
+    sandbox_cache: Annotated[dict, _merge_dict] = {}
 
 
