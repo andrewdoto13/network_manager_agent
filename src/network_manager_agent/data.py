@@ -135,11 +135,15 @@ class DataManager:
             mdf = mdf.copy()
             mdf["state_lower"] = mdf["state"].astype(str).str.lower()
             mdf["county_lower"] = mdf["county"].astype(str).str.lower()
-            all_target_counties = set().union(*state_counties.values())
-            mask = (
-                mdf["state_lower"].isin(state_counties.keys())
-                & mdf["county_lower"].isin(all_target_counties)
-            )
+            target_pairs = {
+                (s, c)
+                for s, counties in state_counties.items()
+                for c in counties
+            }
+            mask = pd.Series([
+                (row["state_lower"], row["county_lower"]) in target_pairs
+                for _, row in mdf[["state_lower", "county_lower"]].iterrows()
+            ])
             mdf = mdf[mask].drop(columns=["state_lower", "county_lower"], errors="ignore")
         else:
             all_counties = set()
