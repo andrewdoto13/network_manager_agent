@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+import numpy as np
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -10,13 +11,30 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_deepseek import ChatDeepSeek
 from langgraph.prebuilt import ToolNode
 
+from . import tools
 from .config import SUMMARIZE_THRESHOLD
 from .data import DataManager
-from langchain_deepseek import ChatDeepSeek
 from .state import AgentState
-from . import tools
+
+
+def _to_native(obj: Any) -> Any:
+    """Recursively convert numpy/pandas types to native Python types for serialization."""
+    if isinstance(obj, dict):
+        return {k: _to_native(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(_to_native(v) for v in obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
 
 
 def _get_anchor_message(state: AgentState) -> str:
@@ -179,8 +197,9 @@ def update_state(state: AgentState):
     if new_entities:
         result["network"] = new_entities
     if new_cache:
+        native_cache = _to_native(new_cache)
         existing_cache = state.get("sandbox_cache", {})
-        merged = {**existing_cache, **new_cache}
+        merged = {**existing_cache, **native_cache}
         result["sandbox_cache"] = merged
     return result
 
