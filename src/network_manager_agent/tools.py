@@ -18,10 +18,11 @@ from langgraph.prebuilt import InjectedState
 from typing import Annotated
 
 from .data import DataManager
+from .state import _to_native
 
 
-# Ephemeral: stores last sandbox_cache snapshot for state persistence
-_last_sandbox_cache: dict = {}
+# Ephemeral: stores pending sandbox_cache snapshot for state persistence
+_pending_sandbox_cache: dict = {}
 
 
 def _blocked_import(name: str, *args, **kwargs):
@@ -248,7 +249,7 @@ def run_code(
 
     Tip: compute_coverage() is the definitive coverage calculator (member-by-member). BallTree proximity checks are heuristic only — validate with compute_coverage(). Timeout: 60 seconds.
     """
-    global _prev_result, _last_sandbox_cache
+    global _prev_result, _pending_sandbox_cache
 
     dm = DataManager()
 
@@ -373,13 +374,7 @@ def run_code(
         output = str(result)
 
     # Persist sandbox_cache snapshot for update_state to pick up (do NOT embed in output)
-    serializable_cache: dict[str, Any] = {}
-    for _k, _v in sandbox_cache.items():
-        try:
-            serializable_cache[_k] = json.loads(json.dumps(_v))
-        except (TypeError, ValueError):
-            pass
-    _last_sandbox_cache = serializable_cache
+    _pending_sandbox_cache = _to_native(dict(sandbox_cache))
 
     if stdout:
         return f"[stdout]\n{stdout}\n[/stdout]\n{output}" if output else f"[stdout]\n{stdout}\n[/stdout]"

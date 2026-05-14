@@ -171,7 +171,7 @@ class TestRunCode:
             "sandbox_cache": {},
             "code": "sandbox_cache['answer'] = 2 + 2",
         })
-        assert tools_mod._last_sandbox_cache["answer"] == 4
+        assert tools_mod._pending_sandbox_cache["answer"] == 4
 
     def test_pandas_query(self, seeded_data_manager, mock_thresholds):
         import network_manager_agent.tools as tools_mod
@@ -181,7 +181,7 @@ class TestRunCode:
             "sandbox_cache": {},
             "code": "sandbox_cache['count'] = candidates_df.shape[0]",
         })
-        assert tools_mod._last_sandbox_cache["count"] == 6
+        assert tools_mod._pending_sandbox_cache["count"] == 6
 
     def test_dataframe_result(self, seeded_data_manager, mock_thresholds):
         import network_manager_agent.tools as tools_mod
@@ -191,7 +191,7 @@ class TestRunCode:
             "sandbox_cache": {},
             "code": "sandbox_cache['data'] = candidates_df[['entity', 'specialty']].head(2).to_dict('records')",
         })
-        data = tools_mod._last_sandbox_cache["data"]
+        data = tools_mod._pending_sandbox_cache["data"]
         assert isinstance(data, list)
         assert len(data) == 2
 
@@ -213,7 +213,7 @@ class TestRunCode:
             "sandbox_cache": {},
             "code": "cov, errs = compute_coverage(network_df, members_df, thresholds, candidates_df)\nsandbox_cache['count'] = cov.__len__()",
         })
-        assert tools_mod._last_sandbox_cache["count"] == 2
+        assert tools_mod._pending_sandbox_cache["count"] == 2
 
     def test_import_returns_error(self, seeded_data_manager, mock_thresholds):
         result = run_code.invoke({
@@ -264,10 +264,10 @@ class TestRunCode:
             "sandbox_cache": {"mykey": "myvalue"},
             "code": "sandbox_cache['retrieved'] = sandbox_cache.get('mykey')",
         })
-        assert tools_mod._last_sandbox_cache["retrieved"] == "myvalue"
+        assert tools_mod._pending_sandbox_cache["retrieved"] == "myvalue"
 
     def test_cache_appended_to_output(self, seeded_data_manager, mock_thresholds):
-        """Cache is persisted via _last_sandbox_cache, not embedded in tool output."""
+        """Cache is persisted via _pending_sandbox_cache, not embedded in tool output."""
         import network_manager_agent.tools as tools_mod
         # Call func directly to bypass InjectedState filtering in @tool decorator
         run_code.func(
@@ -276,11 +276,11 @@ class TestRunCode:
             sandbox_cache={"rankings": [1, 2, 3]},
             code="sandbox_cache['status'] = 'done'",
         )
-        assert tools_mod._last_sandbox_cache["rankings"] == [1, 2, 3]
-        assert tools_mod._last_sandbox_cache["status"] == "done"
+        assert tools_mod._pending_sandbox_cache["rankings"] == [1, 2, 3]
+        assert tools_mod._pending_sandbox_cache["status"] == "done"
 
     def test_cache_modified_in_sandbox_persists(self, seeded_data_manager, mock_thresholds):
-        """Agent can modify sandbox_cache and changes persist via _last_sandbox_cache."""
+        """Agent can modify sandbox_cache and changes persist via _pending_sandbox_cache."""
         import network_manager_agent.tools as tools_mod
         # Call func directly to bypass InjectedState filtering in @tool decorator
         run_code.func(
@@ -289,7 +289,7 @@ class TestRunCode:
             sandbox_cache={},
             code="sandbox_cache['computed'] = 99",
         )
-        assert tools_mod._last_sandbox_cache["computed"] == 99
+        assert tools_mod._pending_sandbox_cache["computed"] == 99
 
  
 
