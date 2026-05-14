@@ -166,6 +166,7 @@ mypy src/network_manager_agent
 │   └── raw/
 │       ├── mi_market_data.csv
 │       └── MedicareSampleCensus2023Q4.csv
+├── logs/                   # Per-thread action logs (log.txt, log.jsonl)
 ├── reports/                # Agent run evaluation reports
 ├── scripts/                # Utility scripts (reserved)
 └── tests/
