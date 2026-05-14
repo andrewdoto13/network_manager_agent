@@ -10,21 +10,22 @@ This project implements a ReAct (Reasoning + Acting) agent that manages a health
 - Uses an LLM to reason about which providers to add to the network based on coverage, quality, and accessibility.
 - Tracks network coverage of members within configurable distance thresholds.
 - Performs complex data analysis and "what-if" network simulations using a sandboxed pandas execution environment.
+- Persists intermediate results across code calls via `sandbox_cache` for multi-step analysis workflows.
 - Streams real-time output to the console and writes timestamped action logs.
 
 ## Architecture
 
 The agent is built with [LangGraph](https://langchain-ai.github.io/langgraph/) and consists of:
 
-- **State**: `AgentState` extends `MessagesState` with fields for `network` (accumulated entity IDs), `summary`, and `county_specialty_thresholds`.
+- **State**: `AgentState` extends `MessagesState` with fields for `network` (accumulated entity IDs), `summary`, `county_specialty_thresholds`, and `sandbox_cache` (persistent dict for cross-call data).
 - **Persistence**: Uses `SqliteSaver` to persist session state in `checkpoints.sqlite`, allowing conversations to be resumed via `thread_id`.
 - **Tools**:
-    - `run_code`: A pandas sandbox for discovery, custom filtering, and simulating coverage impact. Injects `candidates_df`, `network_df`, `members_df`, `thresholds`, and `compute_coverage`. Supports pandas, numpy, sklearn.neighbors.BallTree, and standard library modules. 20-second timeout.
+    - `run_code`: A pandas sandbox for discovery, custom filtering, and simulating coverage impact. Injects `candidates_df`, `network_df`, `members_df`, `thresholds`, `sandbox_cache`, and `compute_coverage`. Supports pandas, numpy, sklearn.neighbors.BallTree, defaultdict, functools, and standard library modules. 60-second timeout. Each call is a fresh sandbox — only `sandbox_cache` persists between calls.
     - `add_contract_entity`: Commits validated entities to the network, skipping duplicates.
-- **Nodes**: `network_manager` (LLM reasoning), `tools` (tool execution via `execute_tools` wrapper), `update_state` (extracts added entity IDs), `summarize_messages` (context management).
+- **Nodes**: `network_manager` (LLM reasoning with 3x retry on empty responses), `tools` (tool execution via `execute_tools` wrapper), `update_state` (extracts added entity IDs + merges sandbox_cache), `summarize_messages` (context management).
 - **Graph**: START -> network_manager -> [tools -> update_state -> {summarize_messages | continue}] -> END.
-- **Summarization**: Automatically triggers when message count exceeds 14, archiving older messages to preserve context.
-- **UI**: `ui.py` provides streaming console output and timestamped action log files (`react_agent_actions_YYYYMMDD_HHMMSS.txt`).
+- **Summarization**: Automatically triggers when message count exceeds 14, archiving older messages to preserve context. Uses `_get_anchor_message` to resume conversations after summarization.
+- **UI**: `ui.py` provides streaming console output and timestamped action log files (`logs/thread_<id>/log.txt` and `logs/thread_<id>/log.jsonl`).
 
 ## Installation
 
@@ -67,6 +68,7 @@ python -m network_manager_agent.main --model gpt-4 --thread-id my_session --coun
 | `--list-threads` | List all existing threads |
 | `--clear-thread <id>` | Delete a specific thread |
 | `--clear-all` | Wipe the entire persistence database |
+| `--max-steps <N>` | Stop after N agent steps |
 
 ### Session Management
 
@@ -106,6 +108,25 @@ Contains member location data with coordinates, county (`countyname`), and state
 ### Thresholds
 Nested JSON format: `{"state": {"county": {"specialty": threshold_miles}}}`. Specialties and counties are case-insensitive. Example: `{"mi": {"wayne": {"general practice": 20.0, "cardiology": 10.0}}}`.
 
+## Sandbox Cache
+
+The `sandbox_cache` is a persistent dictionary that survives across `run_code` calls. Use it to save intermediate results, cache expensive computations, or pass data between analysis steps:
+
+```python
+# Call 1: compute and save
+entity_stats = candidates_df.groupby("entity").agg(
+    count=("entity", "count"),
+    avg_eff=("effectiveness", "mean")
+).reset_index()
+sandbox_cache["entity_stats"] = entity_stats.to_dict("records")
+
+# Call 2: retrieve and use
+entity_stats = pd.DataFrame(sandbox_cache.get("entity_stats", []))
+top_entities = entity_stats.nlargest(5, "avg_eff")["entity"].tolist()
+```
+
+Only JSON-serializable types are supported. The cache is merged into agent state after each `run_code` call.
+
 ## Development
 
 ```bash
@@ -136,7 +157,7 @@ mypy src/network_manager_agent
 │       ├── graph.py        # LangGraph workflow construction
 │       ├── main.py         # CLI entry point
 │       ├── nodes.py        # Node implementations (reasoning, tools, summarization)
-│       ├── state.py        # AgentState definition (extends MessagesState)
+│       ├── state.py        # AgentState definition (extends MessagesState), _to_native helper
 │       ├── tools.py        # Tool definitions: run_code, add_contract_entity
 │       └── ui.py           # Streaming output and action log files
 ├── notebooks/
@@ -145,6 +166,7 @@ mypy src/network_manager_agent
 │   └── raw/
 │       ├── mi_market_data.csv
 │       └── MedicareSampleCensus2023Q4.csv
+├── reports/                # Agent run evaluation reports
 ├── scripts/                # Utility scripts (reserved)
 └── tests/
     ├── conftest.py         # Shared test fixtures

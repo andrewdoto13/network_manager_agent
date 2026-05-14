@@ -29,23 +29,25 @@
     - `src/network_manager_agent/config.py`: `LLMConfig` dataclass (env-var configurable), constants (`SUMMARIZE_THRESHOLD=14`, `SERVICE_AREA_BUFFER_MILES=20`).
     - `src/network_manager_agent/data.py`: `DataManager` singleton with column normalization, coordinate normalization, entity aggregation, schema profiling, and service area filtering.
     - `src/network_manager_agent/graph.py`: Graph orchestration and flow.
-    - `src/network_manager_agent/nodes.py`: Node implementations (LLM reasoning, tool execution, state updates, summarization).
-    - `src/network_manager_agent/state.py`: Agent state definition (`AgentState` extends `MessagesState`).
-    - `src/network_manager_agent/tools.py`: Tool definitions and logic.
+    - `src/network_manager_agent/nodes.py`: Node implementations (LLM reasoning, tool execution, state updates, summarization). Includes `_get_anchor_message` for conversation resumption and 3x retry logic on empty LLM responses.
+    - `src/network_manager_agent/state.py`: Agent state definition (`AgentState` extends `MessagesState`), `_to_native` helper for numpy type serialization.
+    - `src/network_manager_agent/tools.py`: Tool definitions and logic. `_pending_sandbox_cache` ephemeral store for state persistence.
     - `src/network_manager_agent/ui.py`: Streaming output to console and timestamped action log files.
 - **Entry Point**: `src/network_manager_agent/main.py`.
 - **Data**: Market data files in `data/raw/mi_market_data.csv` (candidates) and `data/raw/MedicareSampleCensus2023Q4.csv` (members).
 - **Thresholds**: Nested JSON format `{"state": {"county": {"specialty": threshold_miles}}}`. Specialties and counties are case-insensitive. Example: `{"mi": {"wayne": {"general practice": 20.0, "cardiology": 10.0}}}`.
 - **Interactive Dev**: `notebooks/react_agent.ipynb`.
+- **Reports**: Agent run evaluation reports in `reports/` directory.
 
 ## Key Logic & Patterns
 - **DataManager Singleton**: Centralized data loading with `reset()` for testing. Handles column name synonym resolution (15 canonical columns), coordinate normalization (detects scaled integers, flips positive longitude), and service area geographic filtering via bounding box.
 - **Entity-Level Aggregation**: Provider-level candidate data is aggregated into entity-level summaries (e.g., `provider_count`, `avg_effectiveness`, `avg_efficiency`, `specialties`, `new_patient_rate`, `geographic_reach`, claims volume distributions) before being presented to the agent.
-- **System Prompt Structure**: `nodes.py` injects: ROLE, NETWORK SCOPE (dynamic thresholds), DATA (DataFrame column names), SANDBOX LIBRARIES (pre-imported modules + builtins), SANDBOX FUNCTIONS (`compute_coverage` signature/return schema), GUIDANCE (4 concise tips), and RULES (6 guardrails).
+- **System Prompt Structure**: `nodes.py` injects: ROLE, NETWORK SCOPE (dynamic thresholds), DATA (DataFrame column names), SANDBOX (pre-imported modules + builtins + sandbox_cache docs), SANDBOX FUNCTIONS (`compute_coverage` signature/return schema), GUIDANCE (4 tips), EXAMPLE (sandbox_cache usage pattern), and RULES (6 guardrails).
 - **Sandbox Simulation**: The agent uses the `run_code` tool to evaluate network changes. It can manipulate `candidates_df`, `network_df`, `members_df` using pandas and compute coverage using the injected `compute_coverage` helper (uses `BallTree` for haversine distance queries).
-- **Guidance**: 3 concise tips in the system prompt: (1) BallTree for haversine proximity checks, (2) compute_coverage for coverage simulation, (3) pandas filtering and aggregation patterns.
+- **Sandbox Cache**: `sandbox_cache` is a persistent dict that survives across `run_code` calls. Each call is a fresh sandbox — local variables are lost, but `sandbox_cache` persists. The cache is merged into agent state via `update_state` after each `run_code` call. Only JSON-serializable types are supported. The `_to_native` helper in `state.py` recursively converts numpy types to native Python for serialization.
+- **Guidance**: 4 concise tips in the system prompt: (1) BallTree for haversine proximity checks, (2) compute_coverage for coverage simulation, (3) pandas filtering and aggregation patterns, (4) each run_code call is a fresh sandbox — only sandbox_cache persists.
 - **Core Tools**:
-    - `run_code`: The primary tool for discovery, custom filtering, data analysis, and "what-if" network simulations. Injected state: `network`, `county_specialty_thresholds`. Allowed modules: pandas, numpy, json, math, functools, itertools, collections, sklearn.neighbors.BallTree. 60-second timeout.
+    - `run_code`: The primary tool for discovery, custom filtering, data analysis, and "what-if" network simulations. Injected state: `network`, `county_specialty_thresholds`, `sandbox_cache`. Allowed modules: pandas, numpy, json, math, functools, itertools, collections, defaultdict, sklearn.neighbors.BallTree. 60-second timeout.
     - `add_contract_entity`: Commits entities to the network. Uses `InjectedState("network")` to read current network. Case-insensitive matching, stores lowercase canonical name. Returns `added_entities`, `skipped_entities`, `errors`.
 - **Graph Flow**:
     ```
@@ -55,11 +57,12 @@
       -> (should_summarize) -> summarize_messages OR network_manager
     summarize_messages -> network_manager
     ```
-- **Summarization**: When message count exceeds `SUMMARIZE_THRESHOLD` (14), the `summarize_messages` node keeps the last 3 messages in context and archives everything else into a running summary to preserve quantitative results while maintaining recent tool output visibility.
+- **Summarization**: When message count exceeds `SUMMARIZE_THRESHOLD` (14), the `summarize_messages` node keeps the last 3 messages in context and archives everything else into a running summary to preserve quantitative results while maintaining recent tool output visibility. Uses `_get_anchor_message` to resume conversations after summarization.
+- **Retry Logic**: The `network_manager` node retries up to 3 times on empty LLM responses, appending a nudge message each attempt. If all retries fail, it forces a default `run_code` call.
 - **Streaming UI**: `ui.py` provides real-time console output and writes action logs (`logs/thread_<id>/log.txt` and `logs/thread_<id>/log.jsonl`) with per-step details. Default log directory uses `PROJECT_ROOT / "logs"` so logs are consistent regardless of CWD (CLI vs notebook).
 
 ## Important Notes
-- **State**: `AgentState` extends LangGraph's `MessagesState` (not a plain `TypedDict`). Fields: `network` (accumulated entity IDs), `summary` (running summary string), `county_specialty_thresholds`.
+- **State**: `AgentState` extends LangGraph's `MessagesState` (not a plain `TypedDict`). Fields: `network` (accumulated entity IDs), `summary` (running summary string), `county_specialty_thresholds`, `sandbox_cache` (persistent dict for cross-call state).
 - **Tools**: Only 2 tools exist: `run_code` and `add_contract_entity`. `compute_coverage` is a plain function injected into the `run_code` sandbox, not a standalone tool.
 - **Data**: Data loading is centralized in `data.py` via the `DataManager` singleton. Accessors: `get_candidates_df()`, `get_members_df()`, `get_providers_by_entity()`.
-- **Tests**: Comprehensive test suite across 6 files (113 tests): `test_data.py`, `test_graph.py`, `test_nodes.py`, `test_tools.py`, `test_ui_main.py`, with shared fixtures in `conftest.py`.
+- **Tests**: Comprehensive test suite across 6 files (111 tests): `test_data.py`, `test_graph.py`, `test_nodes.py`, `test_tools.py`, `test_ui_main.py`, with shared fixtures in `conftest.py`.
